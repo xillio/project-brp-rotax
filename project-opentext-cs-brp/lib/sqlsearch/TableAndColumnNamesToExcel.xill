@@ -1,0 +1,53 @@
+use Excel, MySQL, MSSQL, Properties, System, String;
+
+var databaseName = "otcs";
+var database = MSSQL.connect(
+    "jdbc:jtds:sqlserver://localhost/" :: databaseName ::
+    ";user=" :: Properties.get("mssql.username") ::
+    ";password=" :: Properties.get("mssql.password")
+);
+
+var tabel = MSSQL.query(
+    "SELECT *"::
+    " FROM sys.Tables"
+    , [], 30, database
+);
+var path = Properties.get("path.reports") :: "DBinfo_" :: databaseName :: ".xlsx";
+var workbook = Excel.createWorkbook(path);
+var sheet = Excel.createSheet(workbook, databaseName);
+var row = 1;
+Excel.setCellValue(sheet, 1, row, "Table name");
+Excel.setCellValue(sheet, 2, row, "Row count");
+Excel.setCellValue(sheet, 3, row, "Column count");
+Excel.setCellValue(sheet, 4, row, "Columns");
+
+foreach (tab in tabel){
+    row++;
+    var tRows = MSSQL.query(
+        "SELECT TOP 1 * ":: 
+        " FROM " :: databaseName :: "." :: tab.name, [], 30, database
+    );
+    var countRows = MSSQL.query(
+        "SELECT COUNT (*) AS total"::
+        " FROM ":: databaseName :: "." :: tab.name, [], 30, database
+    );
+    foreach (c in countRows){
+        Excel.setCellValue(sheet, 2, row, c.total);
+    }
+    Excel.setCellValue(sheet, 1, row, tab.name);
+    var columns = 0;
+    foreach(tRow in tRows){
+        var column = 4;
+        foreach(key, value in tRow){
+            columns ++;
+            Excel.setCellValue(sheet, column, row, key);
+            column++;
+        }
+        
+    }
+    Excel.setCellValue(sheet, 3, row, columns);
+}
+Excel.save(workbook, path);
+Excel.save(workbook, path);
+
+System.print("Robot finished)");

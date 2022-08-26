@@ -1,0 +1,21 @@
+/**
+ * Project: demo_drupal_aem
+ * Author: Titus Nachbauer
+ * Date: 2016-06-29
+ *
+ * FormatUtil.xill is a library of often used functions related to formatting of strings
+ * It is recommended to include it through your project's Commons library.
+ */
+
+use System, Stream, File, String;
+
+//-------------------------------------------------------------------------
+//						  FUNCTIONS
+//-------------------------------------------------------------------------
+
+/**
+* Returns the string converted to to UpperCamelCase, assuming it was lowerCamelCase
+*/
+function toUpperCamelCase(string) {
+    return String.toUpper(String.substring(string, 0, 1)) :: String.substring(string, 1, String.length(string)) ;
+}

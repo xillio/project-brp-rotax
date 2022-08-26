@@ -1,0 +1,252 @@
+use Assert, Collection, ContentType, Date, Decode, Document, Encode, Excel, ExifTool, File, Hash, MariaDB, Math, Mongo, MSSQL, MySQL, Oracle, Properties, SQLite, Stream, String, System, Template, Web, XML, XURL;
+
+include connector.opentextcs.Commons as opentextcsCommons;
+include connector.opentextcs.udm.export.ExportMapper as ExportMapper;
+
+var databaseName = Properties.get("mssql.dbname");
+var databaseServer = Properties.get("mssql.dbserver");
+var database = MSSQL.connect(
+    "jdbc:jtds:sqlserver://":: databaseServer :: "/" :: databaseName ::
+    ";instance=" :: Properties.get("mssql.instance") ::
+    ";useNTLMv2=true" ::
+    ";domain=" :: Properties.get("mssql.domain") ::
+    ";user=" :: Properties.get("mssql.username") ::
+    ";password=" :: Properties.get("mssql.password")
+);
+var mongoDB = Mongo.connect(Properties.get("mongo.database"));
+var collectionName = Properties.get("mongo.collection");
+
+var i = 1000;
+while(i-->0) {
+    var item = {"DataID": "2800105","VersionNum": 1};
+    addCategories(item,false);
+    System.print(item);
+}
+
+storeCategories();
+export();
+
+function export() {
+    var rootID = Properties.get("source.rootID");
+    var rootXDIP = opentextcsCommons->createXdip("xdip://" :: Properties.get("source.systemName"),rootID);
+    var rootItem = MSSQL.getObject(databaseName::".DTreeCore", {"DataID":rootID}, database);
+    rootItem.xdip = rootXDIP;
+    exportRecursively(rootItem);
+}
+
+function exportRecursively(item) {
+    saveItem(item);
+    var children = getChildren(item);
+    foreach(i, child in children) {
+        child.xdip = opentextcsCommons->createXdip(item.xdip,child.DataID);
+        exportRecursively(child);
+    }
+}
+
+function getChildren(item) {
+    if(item.ChildCount==0) {
+        return;
+    }
+    var query = "SELECT * FROM " :: databaseName::".DTreeCore WHERE ParentId = '" :: item.DataID :: "'"; 
+    var childrenIterator = MSSQL.query(query, {}, 0, database);
+    return childrenIterator;
+}
+
+function saveItem(item) {
+    if(item.DataID==14386) {
+        0;
+    }
+    addMetadata(item);
+    var mappedObject = ExportMapper->exportMappingFromDatabase(item);
+    saveAsDocument(mappedObject);
+}
+
+function addMetadata(item) {
+    addVersions(item);
+    if(item.versions==[]) {
+        addCategories(item,false);
+    } else {
+        foreach(version in item.versions) {
+            addCategories(version,true);
+        }
+    }
+}
+
+function addVersions(item) {
+    item.versions = [];
+    // first query which categories exist for the item 
+    var query = "SELECT * FROM " :: databaseName :: ".DVersData
+      WHERE DocID = " :: item.DataID :: "
+      AND (VerType IS NULL OR VerType <> 'otthumb')" :: //skip OpenText Thumbnails
+      " ORDER BY Version";
+    var versionsFromMSSQL = MSSQL.query(query, [], 0, database);
+    foreach(version in versionsFromMSSQL) {
+        item.versions[] = version;
+    }
+}
+
+function addCategories(item,isVersioned) {
+    item.categories = {};
+    var versionNumber;
+    var dataID;
+    if(isVersioned) {
+        versionNumber = item.Version;
+        dataID = item.DocID;
+    } else {
+        versionNumber = item.VersionNum;
+        dataID = item.DataID;
+    }
+    // first query which categories exist for the item 
+    var query = "SELECT * FROM " :: databaseName :: ".LLAttrData
+      WHERE ID = " :: dataID :: "
+      AND VerNum = " :: versionNumber :: 
+      " AND ParentKeyID = '-1'
+      ORDER BY DefID, AttrID, EntryNum";
+    var categoriesFromMSSQL = MSSQL.query(query, [], 0, database);
+    foreach(categoryFromMSSQL in categoriesFromMSSQL) {
+        var category = Mongo.findOne("categories", {"_id":@categoryFromMSSQL.DefID});
+        if(!category) {
+            Assert.error();
+        }
+        item.categories[categoryFromMSSQL.ValStr] = categoryContents(categoryFromMSSQL,dataID,versionNumber);
+    }
+}
+
+private function categoryContents(categoryRow,dataID,versionNumber) {
+    var categoryContents = {};
+    var query = "SELECT * FROM " :: databaseName :: ".LLAttrData
+      WHERE ID = " :: dataID :: "
+      AND VerNum = " :: versionNumber :: "
+      AND ParentKeyID = '" :: categoryRow.KeyID :: "'
+      AND DefID = '" :: categoryRow.DefID :: "'
+      ORDER BY DefID, AttrID, EntryNum";
+    var categoryAttributesFromMSSQL = MSSQL.query(query, [], 0, database);
+    foreach(attributeRow in categoryAttributesFromMSSQL) {
+        query = {"categoryId" : categoryRow.DefID,"attributeId":@attributeRow.AttrID};
+        var attributeFromMongoDB = Mongo.findOne("categoryAttributes",query);
+        if(attributeRow.KeyID) {
+            addSetContents(categoryRow,attributeRow,categoryContents,versionNumber);
+        } else {
+            var attributeName = attributeFromMongoDB.attributeName;
+            categoryContents[attributeName] = add(categoryContents[attributeName],getValueFromTypes(attributeRow),attributeRow.EntryNum-1);
+        }
+    }
+    return categoryContents;
+}
+
+private function getValueFromTypes(attributeRow) {
+    // in MSSQL, the value of an attribute is stored in one of five columns, each corresponding to a specific data type
+    var fieldNames = ["ValInt","ValReal","ValDate","ValStr","ValLong"];
+    foreach(fieldName in fieldNames) {
+        if(attributeRow[fieldName]) {
+            var value = attributeRow[fieldName];
+            if(String.startsWith(value, "[Stream:")) {
+                value = Stream.getText(value);
+            }
+            return value;
+        }
+    }
+}
+
+private function addSetContents(categoryRow,attributeRow,categoryContents,versionNumber) {
+    var query = "SELECT * FROM " :: databaseName :: ".LLAttrData
+      WHERE ID = " :: categoryRow.ID :: "
+      AND VerNum = " :: versionNumber :: "
+      AND ParentKeyID = '" :: attributeRow.KeyID :: "'
+      AND DefID = '" :: categoryRow.DefID :: "'
+      ORDER BY DefID, AttrID, EntryNum";
+    var categoryAttributesFromMSSQL = MSSQL.query(query, [], 0, database);
+    categoryAttributesFromMSSQL = collect(categoryAttributesFromMSSQL);
+    var multivalue = Collection.length(categoryAttributesFromMSSQL)>1;
+    foreach(i, subAttributeRow in categoryAttributesFromMSSQL) {
+        query = {"categoryId" : categoryRow.DefID,"attributeId":@subAttributeRow.AttrID};
+        var attributeFromMongoDB = Mongo.findOne("categoryAttributes",query);
+
+        if(subAttributeRow.EntryNum>1) {
+                // for consecutive entries, add the attributes together
+            categoryContents[attributeFromMongoDB.setName][attributeFromMongoDB.attributeName] =
+                add(categoryContents[attributeFromMongoDB.setName][attributeFromMongoDB.attributeName],getValueFromTypes(subAttributeRow),subAttributeRow.EntryNum-1);
+        } else { // for the first entry, set the attribute
+            categoryContents[attributeFromMongoDB.setName] = 
+                add(categoryContents[attributeFromMongoDB.setName],{attributeFromMongoDB.attributeName:getValueFromTypes(subAttributeRow)},attributeRow.EntryNum-1);
+        }
+    }
+    /*var setName = attributeFromMongoDB.setName;
+    if(!categoryContents[setName]) {
+        categoryContents[setName] = 
+    }*/
+}
+
+private function add(target,content,index) {
+    if(!target) {
+        return content;
+    }
+    if(System.typeOf(target)=="LIST") {
+        if(Collection.length(target)>index) {
+            target[index] += content;
+        } else {
+            target[index] = content;
+        }
+        return target;
+    } else if(System.typeOf(content)==OBJECT&&System.typeOf(target)==OBJECT) {
+        var result = [target];
+        if(Collection.length(result)>index) { // result[index] exists
+            result[index] += content;
+        } else {
+            result[index] = content;
+        }
+        if(Collection.length(result)==1) {
+            return result[0];
+        } else {
+            return result;
+        }
+    } else {
+        return [target,content];
+    }
+}
+
+function saveAsDocument(object) {
+    var document = object;
+    document._id = object.original.opentext.DataID;
+    Mongo.replaceOne(collectionName, {"_id":document._id}, document, {"upsert":true}, mongoDB);
+}
+
+function storeCategories() {
+    var categoryAttributes = opentextcsCommons->getAllCategoriesFromSQLServer(databaseName,database);
+    var categories = {};
+    foreach(categoryAttribute in categoryAttributes) {
+        categoryAttribute._id = categoryAttribute.regionName;
+        if(!categories[categoryAttribute.categoryId]) {
+            categories[categoryAttribute.categoryId] = {
+                "name" : categoryAttribute.categoryName
+            };
+        }
+        categories[categoryAttribute.categoryId][categoryAttribute._id] = categoryAttribute;
+        var t = Mongo.replaceOne("categoryAttributes", {"_id" : categoryAttribute._id}, categoryAttribute, {"upsert" : true});
+        Collection.remove(categoryAttribute,"categoryId");
+        Collection.remove(categoryAttribute,"categoryName");
+        0;
+    }
+    foreach(id, category in categories) {
+        category._id = id;
+        category.emptyObject = {};
+        foreach(attributeID, attribute in category) {
+            if(attributeID == "name" || attributeID == "_id" || attributeID == "emptyObject") {
+                continue;
+            }
+            if(attribute.setName) {
+                if(!category.emptyObject[attribute.setName]) {
+                    category.emptyObject[attribute.setName] = {};
+                }
+                category.emptyObject[attribute.setName][attribute.attributeName] = null;
+            } else {
+                category.emptyObject[attribute.attributeName] = null;
+            }
+        }
+        
+        var t = Mongo.replaceOne("categories", {"_id" : category._id}, category, {"upsert" : true});
+    }
+}
+
+
+

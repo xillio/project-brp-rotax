@@ -1,0 +1,425 @@
+/**
+ * Project: Alfresco
+ * Author: Arthur van der Wal
+ * Date: 12/07/2019
+ *
+ *
+ *
+ */
+
+use Web, System, XURL, Properties, File, Stream, String, Collection, Encode, Date, Hash, Assert, Mongo, Concurrency;
+
+include connector.opentextcs.api.API as api;
+include project.qE.commons.Helper as helper;
+
+//-------------------------------------------------------------------------
+//						  SETUP
+//-------------------------------------------------------------------------
+
+var database = Mongo.connect(Properties.get("udm.database"));
+var collectionName = Properties.get("udm.collection");
+
+var MAXRETRIES = 5;
+var PRINTPERITEM = 1000;
+var MAXITEMS = 100;
+var DEFAULTPARAMETERS = {
+        // "inline": true,
+        // "view": ":all",
+        "page": 1,
+        // "items-per-page": MAXITEMS
+    };
+
+//-------------------------------------------------------------------------
+//						  DEMO
+//-------------------------------------------------------------------------
+
+
+
+
+
+//-------------------------------------------------------------------------
+//						  PROJECT FUNCTIONS
+//-------------------------------------------------------------------------
+
+
+private function getChildren(request, parameterObj) {
+    var results = api->getNodeChildren(request.parameters.state, request.parameters.objectId, parameterObj.page);
+    if( results.next ) { results.hasMoreItems = true; } else { results.hasMoreItems = false; }
+    
+    return results;
+}
+private function addRequest(document, request) {
+    helper->addRequest({
+        "parameters": {
+            "path": document.original.fileSystem.path,
+            "state": request.parameters.state,
+            "objectId": document._id,
+        },
+        "parent": document
+    });
+}
+
+private function storeDocument(state, node, parent, ancestors, level) {
+    var document = {"original": {}};
+    var update = {};
+    var logs = [];
+    
+    do {
+        document._id = @node.id;
+        
+        // Get Node roles from API (Roles are an indication for what endpoints are available for the node)
+        document.original.roles = getRoles(state, node.id);
+        document.original.audits = getAudits(state, node.id);
+        
+        document = mapObject(document, node, parent, ancestors, level);
+        
+        return document;
+        
+    } fail(error) {
+        
+        update["migration.export.document"] = false;
+        logs[] = {"datetime": Date.now(), "message": error, "type": "error"};
+        
+    } success {
+        
+        update["migration.export.document"] = true;
+        logs[] = {"datetime": Date.now(), "message": "Successfully exported document", "type": "info"};
+        
+    } finally {
+        
+        // Store document
+        storeDocumentInMongo(document, update, logs);
+        
+    }
+}
+private function storeDocumentInMongo(document, update, logs, retry) {
+    do {
+        Mongo.updateOne(collectionName, {"_id": document._id}, {"$set": document + update, "$push": {"migration.logs": {"$each": logs}}}, {"upsert": true}, database);
+    
+        return true;
+    } fail(error) {
+        System.print(error.message, 'debug');
+    }
+    
+    if( retry <= MAXRETRIES ) {
+        storeDocumentInMongo(document, update, logs, retry+1);
+    } else {
+        Assert.error('Error trying to store document with id ' :: document._id);
+    }
+}
+private function storeDocumentInMongo(document, update, logs) {
+    storeDocumentInMongo(document, update, logs, 1);
+}
+private function getRoles(state, id) {
+    do {
+        return api->getNodeRoles(state, id);
+    }
+    
+    return [];
+}
+private function getAudits(state, id) {
+    do {
+        return api->getNodeAudit(state, id);
+    }
+    
+    return [];
+}
+
+
+
+function mapObject(document, node, parent, ancestors, level) {
+    var kind;
+    var original = document.original;
+    
+    // Add all node properties
+    original.properties = node;
+    
+    original = mapDefault(original, node, parent, ancestors, level);
+    
+    if( hasChildren(node) == true ) {
+        original = mapFolder(original, node, parent, level);
+        kind = "Folder";
+    } else {
+        original = mapDocument(original, node, parent, level);
+        kind = "Document";
+    }
+    
+    document += {
+        "kind": kind,
+        "original": original,
+        "modified": original
+    };
+    
+    return document;
+}
+private function mapDefault(original, node, parent, ancestors, level) {
+    
+    var createdBy = getFirstNotNullValue([node.wnd_createdby, node.create_user_id]);
+    var modifiedBy = getFirstNotNullValue([node.wnd_modifiedby, node.modify_user_id]);
+    var createdDate = getFirstNotNullValue([node.create_date, node.modify_date]);
+    var modifiedDate = getFirstNotNullValue([node.modify_date, node.create_date]);
+    
+    var created = created(node.create_date, createdBy);
+    var modified = created(node.modify_date, modifiedBy);
+    var accessed = created(node.modify_date, modifiedBy);
+    
+    // If audits list is provided use first as lastaccessed date
+    if( original.audits ) {
+        foreach(audit in original.audits) {
+            accessed = created(audit.date, audit.userId);
+            break;
+        }
+    }
+    
+    // Set parent Path
+    var parentPath = "";
+    if( parent.original && parent.original.fileSystem && parent.original.fileSystem.path ) {
+        parentPath = parent.original.fileSystem.path;
+    } 
+
+    original += {
+        "contentType": {
+            "systemName": node.type,
+            "displayName": node.type_name
+        },
+        "parent": {
+            "id": parent._id,
+            "path": parentPath,
+            "ancestors": ancestors
+        },
+        "created" : created,
+        "modified" : modified,
+        "accessed" : accessed,
+        "name" : {
+            "systemName" : node.name,
+            "displayName" : node.name,
+            "normalized" : normalized(node.name),
+        },
+        "description": {
+            "short": null
+        }
+    };
+    
+    return original;
+}
+
+
+private function mapFolder(original, node, parent, level) {
+    
+    var path = "/" :: original.name.displayName;
+    if( parent.original && parent.original.fileSystem && parent.original.fileSystem.path ) {
+        path = parent.original.fileSystem.path :: path;
+    } 
+    
+    original += {
+        "container" : {
+            "hasChildren" : true
+        }
+    };
+    
+    original += {
+        "fileSystem" : {
+            "id" : node.id,
+            "path" : path,
+            "depth": level
+        }
+    };
+    
+    return original;
+}
+
+
+private function mapDocument(original, node, parent, level) {
+    
+    var extension = getExtension(node.name);
+    var mimeType = node.mime_type;
+    
+    // Get extension by looking at node type
+    if( !extension ) {
+        extension = getExtensionByType(node.type);
+    }
+    
+    // Get mimeType by looking at extension
+    if( !mimeType && extension ) {
+        mimeType = File.getMimeType(extension);
+        
+        if( !mimeType && extension == 'msg' ) { mimeType = 'application/x-outlook-msg'; }
+    }
+    
+    // Get mimeType by looking at node type
+    if( !mimeType ) {
+        mimeType = getMimeTypeByType(node.type);
+    }
+    
+    
+    var path = "/" :: original.name.displayName;
+    if( parent.original && parent.original.fileSystem && parent.original.fileSystem.path ) {
+        path = parent.original.fileSystem.path :: path;
+    } 
+    
+    // Create a version of the current node
+    var version = createVersionModel(node.id, node.name, node.size, mimeType, extension, original.created.by.systemName, original.created.date, original.modified.date, node.description);
+    
+    
+    original += {
+        "file": {
+            "extension": extension,
+            "rawExtension": extension,
+            "size": node.size
+        },
+        "mimeType": {
+            "type": mimeType
+        },
+        "versions": [version],
+        "fileSystem" : {
+            "id" : node.id,
+            "path" : path,
+            "depth": level
+        }
+    };
+    
+    return original;
+}
+
+
+
+
+private function getExtensionByType(type) {
+    var typeExtensions = getTypes();
+    
+    if( typeExtensions[type] ) {
+       return typeExtensions[type].extension;
+    }
+}
+private function getMimeTypeByType(type) {
+    var typeExtensions = getTypes();
+    
+    if( typeExtensions[type] ) {
+       return typeExtensions[type].mimeType;
+    }
+}
+private function getTypes() {
+    return {
+        749: {
+            "extension": "msg",
+            "mimeType": "application/x-outlook-msg"
+        }
+    };
+}
+
+private function hasChildren(node) {
+    return node.container == true || node.type == 141;
+}
+
+
+private function created(date, systemName) { return created(date, systemName, null); }
+private function created(date, systemName, displayName) {
+    return {
+        "date" : formatDate(date),
+        "by": {
+            "systemName": systemName,
+            "displayName": displayName,
+            "email": ""
+        }
+        
+    };
+}
+
+private function formatDate(date) {
+    if( date ) {
+        return Date.parse(String.replace(date,"\\..*",""), "yyyy-MM-dd'T'HH:mm:ss"); //2015-11-30T08:22:09.000-08:00;
+    }
+}
+
+function getNodeProperties(object) {
+    // return object.content.
+}
+
+function getValue(property) {
+    if( property && Properties.get("connector.alfresco.succinct") == true ) {
+        return property;
+    } 
+    else if( property ) {
+        return property.value;
+    }
+}
+
+
+private function normalized(string) {
+    return String.toLower(String.trim(string, true));
+}
+
+private function getExtension(name) {
+    if( String.matches(name, ".*\\.[a-zA-Z0-9]{2,4}$") ) {
+        var lastIndex = String.lastIndexOf(name, ".");
+        if( lastIndex > -1 ) {
+            var extension = String.substring(name, lastIndex+1, String.length(name));
+            return extension;
+        }
+    }
+}
+
+private function createVersionModel(id, name, size, mimeType, extension, userId, createdDate, modifiedDate, description) {
+    var version = {
+        "id" : id,
+        "number" : 1,
+        "name" : name,
+        "size" : size,
+        "mimeType" : mimeType,
+        "userId" : userId,
+        "createdDate" : createdDate,
+        "modifiedDate" : modifiedDate,
+        "description" : description,
+        "extension" : extension
+    };
+    
+    return version;
+}
+
+//-------------------------------------------------------------------------
+//						  SYSTEM FUNCTIONS
+//-------------------------------------------------------------------------
+
+function doRequest(request, output) {
+    var parameterObj = Collection.duplicate(DEFAULTPARAMETERS);
+    var parent = {};
+    var ancestors = [];
+    var depth = 1;
+    
+    // Set parent information
+    if( request.parent ) {
+        parent = request.parent;
+        ancestors = parent.original.parent.ancestors + [parent._id];
+        depth = parent.original.fileSystem.depth+1;
+    }
+    
+    // Get first items
+    var results = getChildren(request, parameterObj);
+    while(true) {
+        foreach(node in results.data) {
+            var document = storeDocument(request.parameters.state, node, parent, ancestors, depth);
+            
+            if( document.kind == "Folder" ) {
+				addRequest(document, request);
+            }
+            
+            // Push to next stage
+            Concurrency.push(document, output);
+        }
+    
+        // Break if no more items
+        if( results.hasMoreItems == false ) { break; }
+        
+        // Get next items
+        parameterObj.page++; 
+        results = getChildren(request, parameterObj);
+    }
+}
+
+
+// Return value not equal to NULL
+private function getFirstNotNullValue(values) {
+    foreach(v in values) {
+        if( v ) { return v; }
+    }
+}

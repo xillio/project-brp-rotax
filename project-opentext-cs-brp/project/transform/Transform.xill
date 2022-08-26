@@ -1,0 +1,69 @@
+use System, Date, String, Collection, Mongo, Assert, Properties, File, Stream, Hash;
+
+//-------------------------------------------------------------------------
+//						  SETUP
+//-------------------------------------------------------------------------
+
+var database = Mongo.connect(Properties.get("mongo.database"));
+var collectionName = "documents";
+
+//-------------------------------------------------------------------------
+//						  TESTING
+//-------------------------------------------------------------------------
+
+test();
+
+function test() {
+    fixExtension(Mongo.findOne(collectionName, {"modified.contentType.systemName": 144}));
+}
+
+
+
+
+//-------------------------------------------------------------------------
+//						  FUNCTIONS
+//-------------------------------------------------------------------------
+
+function fixExtension(document) {
+    var update = {};
+    var logs = [];
+    
+    do {
+        var name = document.original.name.displayName;
+        var contentType = document.original.contentType.systemName;
+        var extension = getNewExtension(contentType);
+        
+        if( extension ) {
+            
+            update["modified.name.systemName"] = name :: "." :: extension;
+            update["modified.name.displayName"] = name :: "." :: extension;
+            
+        } else {
+            Assert.error("Extension is missing");
+        }
+        
+    } fail(error) {
+        
+        System.print("Doc " :: document._id :: " failed with error: " :: error.message, "debug");
+        
+        update["migration.transform.fixExtension"] = false;
+        logs[] = {"datetime": Date.now(), "message": error, "type": "error"};
+        
+    } success {
+        
+        update["migration.transform.fixExtension"] = true;
+        logs[] = {"datetime": Date.now(), "message": "Successfully fixed document extension", "type": "info"};
+        
+    } finally {
+    
+        Mongo.updateOne(collectionName, {"_id": document._id}, {"$set": update, "$push": {"migration.logs": {"$each": logs}}}, {"upsert": true}, database);
+    
+    }    
+}
+
+private function getNewExtension(contentType) {
+    if( contentType == 749 ) {
+        return "msg";
+    }
+}
+

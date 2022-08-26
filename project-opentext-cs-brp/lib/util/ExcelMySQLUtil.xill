@@ -1,0 +1,179 @@
+use System,Excel,MySQL,Mongo,Collection,String;
+
+include lib.util.ExcelUtil;
+
+MySQL.connect("jdbc:mysql://localhost/test?user=root&password=");
+
+
+/*
+readVerrijkingssheet("D:\\Projects\\NVWA\\Verrijkingsdata\\Migratie Externe Links naar PRO.xlsx",
+	"Unieke Externe Links",
+	{
+		"Nieuwe externe link (deze kolom is later toegevoegd)" : "nieuwe_externe_link",
+	},
+	"sheet_externe_links",
+	MySQL.connect("jdbc:mysql://localhost:3306/nvwa?user=root&password="),
+	{
+		"Map Hippo" : "VARCHAR(50) NULL"
+	}
+);
+*/
+
+function readSheetToMySQL(filePath,sheetName,headerTranslations,tableName,dbConnection,specialColumnTypes) {
+	var workbook = Excel.loadWorkbook(filePath);
+	var sheet = Excel.loadSheet(workbook, sheetName);
+	var headers = readHeaders(sheet);
+	headerTranslations = completeHeaderTranslations(headers,headerTranslations);
+	makeDBTables(tableName,headerTranslations,specialColumnTypes,dbConnection);
+	insertDataIntoDatabase(sheet,headerTranslations,tableName,dbConnection);
+	System.print("Done reading sheet '" :: sheetName :: "' from " :: workbook);
+	return headerTranslations;
+}
+
+function insertDataIntoDatabase(sheet,headerTranslations,tableName,dbConnection) {
+	MySQL.query("TRUNCATE `" :: tableName :: "`");
+	var currentRow = 2;
+	var lastRow = sheet.rows;
+	while(currentRow<=lastRow) {
+		var dbObject = {
+			"sheet_row" : currentRow
+		};
+		foreach(columnNumber,header in headerTranslations) {
+			if(header==null) {
+				continue;
+			}
+			do {
+				dbObject[header.mySQLName] = Excel.getCell(sheet, columnNumber, currentRow);
+			} fail(msg) {
+				System.print("error message: " :: msg.message :: "\nColumn: " :: columnNumber :: ", Row: " :: currentRow,"warning");
+			}
+		}
+		MySQL.storeObject(tableName, dbObject, ["sheet_row"], true, dbConnection);
+		currentRow++;
+	}
+	
+}
+
+// Automatically translates all headers that weren't manually translated yet
+// and merges both groups to one object
+function completeHeaderTranslations(headers,translations) {
+	foreach(header in headers) {
+		if(header!=null && !Collection.containsKey(translations, header.sheetName)) {
+			header.mySQLName = convertStringToMySQLColumnName(header.sheetName);
+		} else if (header!=null) {
+			header.mySQLName = translations[header.sheetName];
+		}
+	}
+	return headers;
+}
+
+
+function readHeaders(sheet) {
+	var currentColumn = 1;
+	var headers = [];
+	while(currentColumn<=sheet.columns) {
+		var headerName = Excel.getCell(sheet, currentColumn, 1);
+		if(headerName == null || headerName == "") {
+			headers[] = null;
+		} else {
+			headers[currentColumn]= {
+				"sheetName" : headerName
+			};
+		}
+		currentColumn++;
+	}
+	return headers;
+}
+
+
+function makeDBTables(tableName,headerTranslations,specialColumnTypes,dbConnection) {
+	var standardDataType = "TEXT NULL";
+	var columnsQueryPart = "";
+	foreach(headerTranslation in headerTranslations) {
+		if(headerTranslation==null) {
+			// empty header. move along.
+			continue;
+		}
+		var dataType = specialColumnTypes[headerTranslation.sheetName];
+		if(dataType==null) {
+			dataType = specialColumnTypes[headerTranslation.mySQLName];
+		}
+		if(dataType==null) {
+			dataType = standardDataType;
+		}
+		columnsQueryPart ::= "`" :: headerTranslation.mySQLName :: "` " :: dataType :: " COMMENT '" :: headerTranslation.sheetName :: "',\r\n";
+	}
+	//columnsQueryPart = String.replace(columnsQueryPart,",\\s*$","");
+	var tableBuildQuery = "CREATE TABLE IF NOT EXISTS `" :: tableName :: "` (
+			`sheet_row` INT NOT NULL,
+			" :: columnsQueryPart :: "
+			PRIMARY KEY (`sheet_row`)
+		)
+		COLLATE='utf8_general_ci'
+		ENGINE=InnoDB";
+	MySQL.query(tableBuildQuery, {}, 50, dbConnection);
+}
+
+function makeSheetFromMySQLTable(tableName,targetPath,sheetName) {
+	var mySQLRows = MySQL.query("SELECT * FROM " :: tableName :: " ORDER BY sheet_row");
+	var workbook = Excel.createWorkbook(targetPath);
+	var sheet = Excel.createSheet(workbook, sheetName);
+	var headerTranslations = getHeaderTranslationsFromMySQLComments(tableName);
+	insertHeaders(sheet,headerTranslations);
+	foreach(mySQLRow in mySQLRows) {
+		var excelRow = makeExcelRow(mySQLRow,headerTranslations);
+		insertRow(sheet,excelRow,mySQLRow.sheet_row,headerTranslations);
+	}
+	System.print("Saving " :: workbook);
+	Excel.save(workbook);
+	
+}
+
+private function getHeaderTranslationsFromMySQLComments(tableName) {
+ 	var headerTranslations = {};
+	var columns = MySQL.query("show full columns from " :: tableName);
+	foreach(column in columns) {
+		if(column.Comment!="") {
+			headerTranslations[column.Field] = column.Comment;
+		}
+	}
+	return headerTranslations;
+}
+
+private function makeSimpleHeaderTranslations(headerTranslations) {
+	var simpleHeaderTranslations = {};
+	foreach(translation in headerTranslations) {
+		if(translation !=null) {
+			simpleHeaderTranslations[translation.mySQLName] = translation.sheetName;
+		}
+	}
+	return simpleHeaderTranslations;
+}
+
+private function getHeadersFromTranslationList(headerTranslations) {
+	var headers = [];
+	foreach(headerTranslation in headerTranslations) {
+		if(headerTranslation==null){
+			continue;
+		}
+		headers[] = headerTranslation.sheetName;
+	}
+	return headers;
+}
+
+
+private function makeExcelRow(mySQLRow,simpleHeaderTranslations) {
+	var row = {};
+	foreach(mySQLName,sheetName in simpleHeaderTranslations) {
+		row[sheetName] = mySQLRow[mySQLName];
+	}
+	return row;
+}
+
+function convertStringToMySQLColumnName(string) {
+	var name = String.toLower(string);
+	name = String.replace(name, "(^\\s*|\\s*$)", "");
+	name = String.replace(name,"[^\\w-]","_");
+	
+	return name;
+}

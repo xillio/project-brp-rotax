@@ -1,0 +1,91 @@
+use System, Date, String, Collection, Mongo, Assert, Properties, File, Stream, Concurrency;
+
+include project.extract.Extract as otcs;
+
+//-------------------------------------------------------------------------
+//						  SETUP
+//-------------------------------------------------------------------------
+
+var database = Mongo.connect(Properties.get("mongo.database"));
+var concurrencyRoot = "project/concurrency";
+// var threads = 4;
+
+//-------------------------------------------------------------------------
+//						  EXPORT
+//-------------------------------------------------------------------------
+
+flagPotentialDuplicates();
+
+// Start concurrent category extraction
+createHashes();
+
+//-------------------------------------------------------------------------
+//						  FUNCTIONS
+//-------------------------------------------------------------------------
+
+function flagPotentialDuplicates() {
+    var pipeline = [
+        {
+            "$match": {
+                "modified.container.hasChildren": {"$ne": true}
+            }
+        },
+        {
+            "$group": {
+                "_id": "$original.file.size",
+                "total": {"$sum": 1},
+                "ids": {"$addToSet": "$_id"}
+            }
+        },
+        {
+            "$match": {
+                "total": {"$gt": 1}
+            }
+        }
+    
+    ];
+    var duplicates = Mongo.aggregate("documents", pipeline, {"batchSize": 100, "allowDiskUse": true, "noCursorTimeout": true}, database);
+    
+    foreach(d in duplicates) {
+        
+        foreach(id in d.ids) {
+            Mongo.updateOne("documents", {"_id": id}, {"$set": {"migration.duplicate.potential": true}}, {}, database);
+        }
+        
+    }
+}
+
+function createHashes() {
+    
+    // Start crawling provided root nodes
+    Concurrency.run([
+        // Provider
+        {
+            "robot": concurrencyRoot :: "/AggregateProvider.xill",
+            "config": {
+                "pipeline": [{
+                    "$match": {
+                        "migration.duplicate.potential": true,
+                        "migration.export.hashed": {"$ne": true}
+                    }
+                }],
+                "options": {
+                    "batchSize": 100,
+                    "allowDiskUse": true,
+                    "noCursorTimeout": true
+                },
+                "printPerItem": 100
+            },
+            "threadCount": 1
+        }
+        ,
+        {
+            "robot": concurrencyRoot :: "/extract/createHash.xill",
+            "config": {
+                // "queueSize": 10
+            },
+            // "threadCount": threads,
+        }
+        
+    ]);
+}

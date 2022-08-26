@@ -1,0 +1,34 @@
+use Collection, Mongo, MSSQL, Properties, System, String, Concurrency;
+
+include project.extract.Extract as otcs;
+
+
+//-------------------------------------------------------------------------
+//						  SETUP
+//-------------------------------------------------------------------------
+
+
+var items = [{"_id": 2000}];
+
+argument data = Concurrency.testInput({}, items);
+
+//-------------------------------------------------------------------------
+//						  MAIN
+//-------------------------------------------------------------------------
+
+// Set item
+var object = Concurrency.pop(data.input);
+
+// Loop through items (folders)
+while(object != null) {
+    
+    otcs->extract(object._id);
+    
+    object = Concurrency.pop(data.input);
+    
+}
+
+
+
+
+

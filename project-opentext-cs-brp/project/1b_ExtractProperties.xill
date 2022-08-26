@@ -1,0 +1,59 @@
+use System, Date, String, Collection, Mongo, Assert, Properties, File, Stream, Concurrency;
+
+include project.extract.Extract as otcs;
+
+//-------------------------------------------------------------------------
+//						  SETUP
+//-------------------------------------------------------------------------
+
+var concurrencyRoot = "project/concurrency";
+// var threads = 4;
+
+//-------------------------------------------------------------------------
+//						  EXPORT
+//-------------------------------------------------------------------------
+
+// Start concurrent category extraction
+extract();
+
+
+System.print("done");
+
+//-------------------------------------------------------------------------
+//						  FUNCTIONS
+//-------------------------------------------------------------------------
+
+function extract() {
+    
+    // Start crawling provided root nodes
+    Concurrency.run([
+        // Provider
+        {
+            "robot": concurrencyRoot :: "/AggregateProvider.xill",
+            "config": {
+                "pipeline": [{
+                    "$match": {
+                        
+                    }
+                }],
+                "options": {
+                    "batchSize": 10,
+                    "allowDiskUse": true,
+                    "noCursorTimeout": true
+                },
+                "printPerItem": 10
+            },
+            "threadCount": 1,
+            "queueSize": 10
+        }
+        ,
+        {
+            "robot": concurrencyRoot :: "/extract/getProperties.xill",
+            "config": {
+                "queueSize": 10
+            },
+            // "threadCount": threads,
+        }
+        
+    ]);
+}

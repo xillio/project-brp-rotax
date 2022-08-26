@@ -1,0 +1,135 @@
+/**
+ * Project: Util Library
+ * Author: Titus Nachbauer
+ * Date: 2016-11-09
+ *
+ * LogUtil.xill is a library of often used functions related to logging migration progress.
+ * It is recommended to include it through your project's Commons library.
+ */
+
+use System, Assert, Date, Properties, Mongo;
+
+function initializeDocumentForLogging(data, sourceSystem) {
+    var document = {
+        "source" : {
+            "current" : {
+                "migration" : initializeMigrationLogging(data, "document initialized", sourceSystem, ""),
+                "file" : initializeFileLogging(data)
+            }
+        }
+    };
+    document._id = data._id;
+    document.target = document.source;
+    return document;
+}
+
+// Returns an initialized migration decorator for the extraction phase
+function initializeMigrationLogging(data, action, sourceSystem, targetSystem) {
+    var migrationLog = {
+         "sourceSystem" : sourceSystem,
+         "targetSystem" : targetSystem,
+         "lastAction" : action,
+         "lastActionTimestamp" : Date.now(),
+         "extractionStarted" : Date.now(),
+         "extractionFinished" : Date.now(), //set dummy value, will be updated on success
+         "failed" : false
+    };
+    if (data.exportDetails != null && data.exportDetails.extractionStart != null) {
+        migrationLog.extractionStarted = data.exportDetails.extractionStart;
+    }
+    return migrationLog;
+}
+
+function initializeFileLogging(data) {
+    var fileLog = {
+         "name" : "",
+         "extension" : "",
+         "rawExtension" : "",
+         "path" : "",
+         "size": -1
+    };
+    if (data.file != null) {
+        fileLog = data.file;
+    }
+    return fileLog;
+}
+ 
+// Logs start of document phase execution
+function logDocumentPhaseStart(document, phase) {
+    Assert.isTrue(phase == Properties.get("migration.status.extraction") 
+        || phase == Properties.get("migration.status.transformation") 
+        || phase == Properties.get("migration.status.load"), 
+        "Migration phase must be '"::Properties.get("migration.status.extraction")::"', '"
+        ::Properties.get("migration.status.transformation")::"' or "
+        ::Properties.get("migration.status.load")::".");
+    document = logDocumentAction(document, "Starting "::phase::" for document");
+    document.target.current.migration[phase::"Started"] = Date.now();
+    return document;
+}
+
+// Logs execution of document action
+function logDocumentAction(document, action) {
+    System.print(action :: " " :: formatDocumentInfo(document));
+    document.target.current.migration.lastAction = action;
+    document.target.current.migration.lastActionTimestamp = Date.now();
+    return document;
+}
+
+// Logs success of document for certain migration phase, which might be "extraction", "transformation" or "load" (values set in properties)
+function logDocumentPhaseSuccess(document, phase) {
+    Assert.isTrue(phase == Properties.get("migration.status.extraction")
+        || phase == Properties.get("migration.status.transformation")
+        || phase == Properties.get("migration.status.load"), 
+        "Migration phase must be '"::Properties.get("migration.status.extraction")::"', '"
+        ::Properties.get("migration.status.transformation")::"' or "
+        ::Properties.get("migration.status.load")::".");
+    document = logDocumentAction(document, phase :: " finished");
+    document.target.current.migration[phase::"Finished"] = Date.now();
+    return document;
+}
+
+// Logs failure of document for certain migration phase, which might be "extraction", "transformation" or "load" (values set in properties)
+function logDocumentPhaseFailure(document, error, phase) {
+    Assert.isTrue(phase == Properties.get("migration.status.extraction")
+        || phase == Properties.get("migration.status.transformation")
+        || phase == Properties.get("migration.status.load"), 
+        "Migration phase must be '"::Properties.get("migration.status.extraction")::"', '"
+        ::Properties.get("migration.status.transformation")::"' or "
+        ::Properties.get("migration.status.load")::".");
+    System.print("Document "::phase::" failed with error:\n" :: System.toJSON(error, true) :: "\nfor document " :: formatDocumentInfo(document), "ERROR");
+    document.target.current.migration[phase::"Finished"] = Date.now();
+    document.target.current.migration.failed = true;
+    document.target.current.migration.failureReason = error;
+    return document;
+}
+
+// Saves a document that was marked by logDocumentPhaseFailure or logDocumentPhaseSuccess to database (use Mongo.connect() to get connection first) 
+function saveLoggedDocument(document, database) {
+    if (!isFailedExtraction(document)) {
+        Mongo.replaceOne(Properties.get("udm.collection"), {"_id" : document._id}, document, {}, database);
+    } else {
+        var id = Mongo.replaceOne(Properties.get("error.collection"), {"_id" : document._id}, document, {"upsert":true}, database);
+        if (document._id == null) {
+            System.print("Document did not have an _id field, saved to ":: Properties.get("error.db.name") :: " with id: " :: id);
+        }
+    }
+}
+
+// Returns true if extraction has failed and document cannot be saved to UDM
+private function isFailedExtraction(document) {
+    return (document.target.current.migration.extractionFinished==null && document.target.current.migration.failed==true);
+}
+
+// Format document information in a standardized way (document must be normalized using normalizeDocument)
+private function formatDocumentInfo(document) {
+	var fileName;
+	if(document.source.current.file!=null) {
+		fileName = document.source.current.file.name;
+	} else {
+		fileName = "no file";
+	}
+    return "_id: " :: document._id :: " filename: " :: fileName;
+}
+
+
+

@@ -1,0 +1,208 @@
+use Assert, File, Stream, System;
+
+include connector.opentextcs.api.API as api;
+include connector.opentextcs.Commons as commons;
+
+// get all basic object metadata, its categories metadata and all version files information
+function getObject(url, state){
+    var parsedXdip = commons->parseXdip(url);
+    if (parsedXdip.nodeId == null){
+        parsedXdip.nodeId = 0;
+    }
+    var result;
+    do {
+        result = api->getNode(state, parsedXdip.nodeId);
+    } fail(error) {
+        System.print("Failed to get node " :: parsedXdip.nodeId ::".\r\nerror:" :: error,"error");
+    }
+    if(!result) {
+        return null; // I wish I could just write this line in the fail() block
+    }
+    result.xdip = url;
+    result.sourceURL = String.replace(state.apiUrl, "/api/.*","");
+    result.sourceURL ::= "?func=ll&objId=" :: parsedXdip.nodeId;
+    if(result.container) {
+        result.sourceURL::=  "&objAction=browse";
+    } else {
+        result.sourceURL::= "&objAction=viewheader";
+    }
+    if(result) {
+        addMetadata(result,state);
+        if(!result.container) {
+            do{ 
+                addVersions(result,state);
+            } fail(error) {
+                System.print("Versions request failed for item with type '" :: result.typeName :: "'","debug");
+            }
+        }
+    }
+    return result;
+}
+
+function getChildren(url, state){
+    var parsedXdip = commons->parseXdip(url);
+    if (parsedXdip.nodeId == null){
+        parsedXdip.nodeId = 0;
+    }
+    var totalResult = {"data":[]};
+    var currentResult = {"next":1};
+    while(currentResult.next) {
+        do {
+            currentResult = api->getNodeChildren(state, parsedXdip.nodeId, currentResult.next);
+        } fail (error) {
+            System.print("api->getNodeChildren went wrong. Error: " :: error,"warning");
+            System.wait(500);
+        }
+        if(!currentResult) {
+            break;
+        }
+        foreach(node in currentResult.data){
+            node.xdip = commons->createXdip(url, node.id);
+            totalResult.data[] = node;
+        }
+    }
+    
+    return totalResult;
+}
+
+function getBinaryContent(url, state){ 
+    var parsedXdip = commons->parseXdip(url);
+    var result = api->getNodeContent(state, parsedXdip.nodeId);
+    return result;
+}
+
+function createObject(object, binaryContent, state){
+    var path = null;
+    var result;
+    if (binaryContent != null){
+        var path = "/test/" :: object.displayName :: "." :: object.ext;
+        Stream.write(binaryContent, File.openWrite(object.tempFile));
+    }
+    do{
+        result = api->createNode(state, object.name, object.type, object.parentId, path, object.mimeType);
+    }
+    finally {
+        File.delete(path);
+    }
+    return result;
+    
+}
+
+function deleteObject(url, state){
+    var parsedXdip = commons->parseXdip(url);
+    var result = api->deleteNode(state, parsedXdip.nodeId);
+    return result;
+}
+
+function updateObject(url, object, metadata, state){
+    var parsedXdip = commons->parseXdip(url);
+    var result = api->updateNode (state, parsedXdip.nodeId, object.name, object.description);
+    return result;
+}
+
+function updateBinaryContent(object, binaryContent, state){
+    Assert.error("Not implemented");
+}
+
+private function addMetadata(object,state) {
+    var parsedXdip = commons->parseXdip(object.xdip);
+    var categories = api->getNodeCategories(state, parsedXdip.nodeId);
+    object.categories = []; // Category names from Opentext systems can not always be used as key in a JSON object
+    foreach(catID, catName in categories) {
+        var catContent = getCategoryContent(state, parsedXdip.nodeId, catID);
+        object.categories[] = {
+            "name":catName,
+            "content" : catContent
+        };
+    }
+}
+
+private function getCategoryContent(state,nodeId,categoryId) {
+    var categoryAttributes = api->getNodeCategory (state, nodeId, categoryId);
+    
+    var categoryContent = {};
+    foreach (categoryKey, categoryDefinitionValue in categoryAttributes.definitions) {
+        // exclude the definition of the category itself, consider only the attributes
+        // also skip sub fields of maps since they are extracted in getCategorySetContent()
+        if (categoryKey == categoryId || String.contains(categoryKey,"_x_")) {
+            continue;
+        }
+        
+        if(Collection.containsKey(categoryAttributes.definitions_map,categoryKey)) {
+            // category field is OBJECT or LIST of OBJECTS (=set)
+            categoryContent[categoryDefinitionValue.name] = getCategorySetContent(categoryAttributes,categoryKey);
+        } else {
+            // category field is ATOMIC or LIST of ATOMICS
+            categoryContent[categoryDefinitionValue.name] = categoryAttributes.data[categoryKey];
+        }
+    }
+    return categoryContent;
+}
+
+private function getCategorySetContent(categoryAttributes,categoryKey) {
+    var subIDs = categoryAttributes.definitions_map[categoryKey];
+    var content = [];
+    var subFields = [];
+    foreach(id in subIDs) {
+        var parts = String.regex(id,categoryKey :: "_x_(\\d+)");
+        if(!parts) {
+            Assert.error("Category key has unexpected format :" :: categoryKey);
+            break;
+        }
+        subFields[] = {
+            "subFieldID" : parts[1],
+            "name" : categoryAttributes.definitions[id].name
+        };
+    }
+    var setIndex = 0;
+    var hasSetWithCurrentIndex = true;
+    while(hasSetWithCurrentIndex) {
+        foreach(subField in subFields) {
+            var subFieldKey = categoryKey :: "_" :: (setIndex+1) :: "_" :: subField.subFieldID;
+            if(!Collection.containsKey(categoryAttributes.data,subFieldKey)) {
+                hasSetWithCurrentIndex = false;
+                break;
+            }
+            if(Collection.length(content)==setIndex) {
+                content[setIndex] = {};
+            }
+            var subFieldContent = categoryAttributes.data[subFieldKey];
+            content[setIndex][subField.name] = subFieldContent;
+        }
+        setIndex++;
+    }
+    return content;
+}
+
+private function addVersions(object,state) {
+    var versionInformation = api->getVersions (state, object.id);
+    object.versions = versionInformation;
+}
+
+
+
+
+/*private function getCategoryContent(state,nodeId,categoryId) {
+    var categoryAttributes = api->getNodeCategory (state, nodeId, categoryId);
+    
+    var categoryContent = {};
+    var previousAttribute = {"key":"","name":""};
+    foreach (categoryKey, categoryValue in categoryAttributes.definitions) {
+        // exclude the definition of the category itself, consider only the attributes
+        if (categoryKey == categoryId) {
+            continue;
+        }
+        var VALUE = categoryAttributes.data[categoryKey]; // uppercased variable name because this is the real content and the rest is way too complicated
+        if(previousAttribute.key != "" && String.startsWith(categoryKey, previousAttribute.key)) {
+            // is sub attribute. must be handled as such
+            if(!categoryContent[previousAttribute.name]) {
+                categoryContent[previousAttribute.name] = {};
+            }
+            categoryContent[previousAttribute.name][categoryValue.name] = VALUE;
+        } else {
+            categoryContent[categoryValue.name] = VALUE;
+            previousAttribute = {"key":categoryKey,"name":categoryValue.name};
+        }
+    }
+    return categoryContent;
+}*/

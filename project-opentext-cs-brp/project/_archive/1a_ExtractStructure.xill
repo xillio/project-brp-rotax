@@ -1,0 +1,92 @@
+use System, Date, String, Collection, Mongo, Assert, Properties, File, Stream, Concurrency;
+
+include project.extract.Extract as otcs;
+
+//-------------------------------------------------------------------------
+//						  SETUP
+//-------------------------------------------------------------------------
+
+var database = Mongo.connect(Properties.get("mongo.database"));
+var collectionName = Mongo.connect(Properties.get("mongo.collection"));
+var concurrencyRoot = "project/concurrency";
+var rootNodes = String.split(Properties.get("project.nodes"), ",");	
+
+//-------------------------------------------------------------------------
+//						  EXPORT
+//-------------------------------------------------------------------------
+
+
+// Start concurrent extraction
+crawlRootNodes(rootNodes);
+
+// Fixes issue with negative project ids as parentId
+fixNegativeIds(database, collectionName);
+
+//-------------------------------------------------------------------------
+//						  FUNCTIONS
+//-------------------------------------------------------------------------
+
+
+function crawlRootNodes(rootNodes) {
+    // Create temp collection in Mongo with root nodes
+    var collectionName = "tmpRootNodes";
+    
+    Mongo.drop(collectionName, database);
+    
+    foreach(nodeId in rootNodes) { Mongo.updateOne(collectionName, {"_id": nodeId}, {"$set": {"_id": nodeId}}, {"upsert": true}, database); }
+    
+
+    // Start crawling provided root nodes
+    Concurrency.run([
+        // Provider
+        {
+            "robot": concurrencyRoot :: "/AggregateProvider.xill",
+            "config": {
+                "pipeline": [{
+                    "$match": {}
+                }],
+                "options": {
+                    "batchSize": 100,
+                    "allowDiskUse": true,
+                    "noCursorTimeout": true
+                },
+                "collectionName": collectionName
+            },
+            "threadCount": 1,
+        }
+        ,
+        {
+            "robot": concurrencyRoot :: "/extract/CrawlRootNodes.xill",
+            "config": {
+                
+            },
+            // "threadCount": threads,
+        }
+        
+    ]);
+    
+    Mongo.drop(collectionName, database);
+}
+
+function fixNegativeIds(db, cl) {
+    var documents = Mongo.find(cl, {"original.parent.id": {"$regex": Mongo.regex("^-")}}, {}, {}, {}, db) ;
+    
+    foreach(d in documents) {
+    
+        var parentId = fixid(d.original.parent.id);
+    
+        var update = {
+            "original.parent.id": @parentId,
+            "modified.parent.id": @parentId
+        };
+        
+        Mongo.updateOne(cl, {"_id": d._id}, {"$set": update}, {}, db);
+    }
+
+    
+}
+
+function fixid(id) {
+    return (id+0)*-1;
+}
+

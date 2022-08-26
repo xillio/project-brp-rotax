@@ -1,0 +1,186 @@
+use System, Date, String, Collection, Mongo, Assert, Properties, File, Stream, Concurrency;
+
+//-------------------------------------------------------------------------
+//						  SETUP
+//-------------------------------------------------------------------------
+
+var database = Mongo.connect(Properties.get("udm.name"));
+var collectionName = "documents";
+
+
+//-------------------------------------------------------------------------
+//						  FIELDS MAPPING
+//-------------------------------------------------------------------------
+
+
+function addMetadata(location, displayName, systemName, value) {
+    Mongo.createIndex(collectionName, {'original.fileSystem.path': 1}, {}, database) ;
+    
+    System.print(String.regexEscape(location));
+    
+    var pipeline = [
+        {
+            "$match": {
+                "original.fileSystem.path": Mongo.regex(String.regexEscape(location))
+            }
+        }
+    ];
+    
+    var documents = Mongo.aggregate(collectionName, pipeline, {"allowDiskUse": true, "noCursorTimeout": true}, database);
+    
+    foreach(doc in documents) {
+        
+        var update = {
+            "modified.metadata." :: systemName: {
+                "displayName": displayName,
+                "systemName": systemName,
+                "value": value
+            }
+        };
+        
+        Mongo.updateOne(collectionName, {"_id": doc._id}, {"$set": update}, {}, database);
+        
+    }
+}
+
+function mapLocation(location, object) {
+    Mongo.createIndex(collectionName, {'original.parent.path': 1}, {}, database) ;
+    Mongo.createIndex(collectionName, {'original.fileSystem.path': 1}, {}, database) ;
+    
+    System.print(String.regexEscape(location));
+    
+    var pipeline = [
+        {
+            "$match": {
+                "original.parent.path": Mongo.regex(String.regexEscape(location))
+            }
+        },
+        {
+            "$match": {
+                "$or": [
+                    {"original.parent.path": {"$ne": location}},
+                    {"original.container.hasChildren": true}
+                ]
+            }
+        },
+        {
+            
+            "$project": {
+                "value": {
+                    "$regexFind": { "input": "$original.fileSystem.path", "regex": Mongo.regex(String.regexEscape(location) :: "/([^\\/]+)") }
+                }
+            }
+        }
+    ];
+    
+    var documents = Mongo.aggregate(collectionName, pipeline, {"allowDiskUse": true, "noCursorTimeout": true}, database);
+    
+    foreach(doc in documents) {
+        
+        if( doc.value && doc.value.captures && Collection.length(doc.value.captures) > 0  && !String.contains(doc.value.captures[0], ".") ) {
+            
+            var update = {
+                "modified.metadata." :: object.systemName: {
+                    "displayName": object.displayName,
+                    "systemName": object.systemName,
+                    "value": doc.value.captures[0]
+                }
+            };
+            
+            Mongo.updateOne(collectionName, {"_id": doc._id}, {"$set": update}, {}, database);
+            
+        }
+        
+    }
+}
+
+function mapRelevantYear() {
+    Mongo.createIndex(collectionName, {'original.fileSystem.path': 1}, {}, database) ;
+    
+    var pipeline = [
+        {
+            "$match": {
+                "original.fileSystem.path": Mongo.regex("(19\\d{2}|20\\d{2})")
+            }
+        },
+        {
+            
+            "$project": {
+                "value": {
+                    "$regexFindAll": { "input": "$original.fileSystem.path", "regex": Mongo.regex("(19\\d{2}|20\\d{2})") }
+                }
+            }
+        },
+        {
+            "$project": {
+                "value": {
+                    "$slice": ["$value", -1]
+                }
+            }
+        },
+        {
+            "$unwind": "$value"
+        }
+    ];
+    
+    var documents = Mongo.aggregate(collectionName, pipeline, {"allowDiskUse": true, "noCursorTimeout": true}, database);
+    
+    foreach(doc in documents) {
+        
+        var update = {
+            "modified.metadata.RelevantYear": {
+                "displayName": "Relevant Year",
+                "systemName": "RelevantYear",
+                "value": doc.value.match
+            }
+        };
+        
+        Mongo.updateOne(collectionName, {"_id": doc._id}, {"$set": update}, {}, database);
+        
+    }
+    
+}
+
+function mapDocumentState() {
+    Mongo.createIndex(collectionName, {'source.current.file.path': 1}, {}, database) ;
+    
+    var pipeline = [
+        {
+            "$match": {
+                "source.current.file.path": Mongo.regex("(?i)(draft|final)")
+            }
+        },
+        {
+            
+            "$project": {
+                "value": {
+                    "$regexFind": { "input": "$source.current.file.path", "regex": Mongo.regex("(?i)(draft|final)") }
+                }
+            }
+        }
+    ];
+    
+    var documents = Mongo.aggregate(collectionName, pipeline, {"allowDiskUse": true, "noCursorTimeout": true}, database);
+    
+    foreach(doc in documents) {
+        
+        var update = {
+            "target.metadata.DocumentState": {
+                "displayName": "Document State",
+                "systemName": "DocumentState",
+                "value": doc.value.match
+            }
+        };
+        
+        Mongo.updateOne(collectionName, {"_id": doc._id}, {"$set": update}, {}, database);
+        
+    }
+    
+}
+
+function unsetMetadata() {
+    System.print("Reset metadata");
+    
+    var update = {"modified.metadata": 1};
+    Mongo.update(collectionName, {}, {"$unset": update}, {}, database);
+}

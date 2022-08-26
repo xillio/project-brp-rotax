@@ -1,0 +1,64 @@
+use System, String;
+
+include connector.opentextcs.service.Service as service;
+include connector.opentextcs.udm.export.ExportMapper as export;
+include connector.opentextcs.udm.import.ImportMapper as import;
+
+function getObject(url, state){
+    state = transformState(state);
+    var result = service->getObject(url, state);
+    result.xdip = url;
+    result = export->exportMapping(result);
+    return result;
+}
+
+function getChildren(url, state){
+    state = transformState(state);
+    var result = service->getChildren(url, state);
+    foreach (child in result.data){
+        child = export->exportMapping(child);
+    }
+    return result;
+}
+
+function getBinaryContent(url, state){
+    state = transformState(state);
+    return service->getBinaryContent(url, state);
+}
+
+function createObject(object, binaryContent, state){
+    state = transformState(state);
+    object = import->importMapping(object);
+    var result = service->createObject(object, binaryContent, state);
+    return result;
+}
+
+function deleteObject(url, state){
+    state = transformState(state);
+    var result = service->deleteObject(url, state);
+    return result;
+}
+
+function updateObject(url, object, metadata, state){
+    state = transformState(state);
+    metadata = import->importMapping(metadata);
+    var result = service->updateObject(url, object, metadata, state);
+    return result;
+}
+
+function updateBinaryContent(object, binaryContent, state){
+    state = transformState(state);
+    object = import->importMapping(object);
+    var result = service->updateBinaryContent(object, binaryContent, state);
+    return result;
+}
+
+private function transformState(state){
+    return {
+        "apiUrl": state.host,
+        "credentials": {
+            "username": state.user,
+            "password": state.pass
+        }
+    };
+}

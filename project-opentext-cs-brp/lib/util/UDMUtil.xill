@@ -1,0 +1,36 @@
+/**
+ * Project: demo_drupal_aem
+ * Author: Titus Nachbauer
+ * Date: 2016-06-29
+ *
+ * UDMUtil.xill is a library of often used functions related to UDM.
+ * It is recommended to include it through your project's Commons library.
+ */
+
+use System, Stream, Mongo;
+
+//-------------------------------------------------------------------------
+//						  FUNCTIONS
+//-------------------------------------------------------------------------
+
+/**
+* Returns the connection to the default UDM database
+*/
+function getUDMConnection(database){
+    do {
+        return Mongo.connect (database);
+    } fail (error) {
+        System.print("Error connecting to UDM database: " :: database :: ", error: ", "error");
+    }
+}
+
+/**
+* Clears the documents collection in the Mongo database
+*/
+function clearUDMDocuments(database) {
+    do {
+        Mongo.drop("documents", database);
+    } fail (error) {
+        System.print("Error clearing UDM documents: " :: database :: ", error: ", "error");
+    }
+}

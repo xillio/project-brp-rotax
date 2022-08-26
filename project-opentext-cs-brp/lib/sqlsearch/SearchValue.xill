@@ -1,0 +1,113 @@
+use MSSQL, Properties, System, String, Math;
+
+//TO DO: if lookValue is a number, search in all text and number fields. If not, only search in all text fields.
+// Ignore all other fields types? (date, xml, geometry, timestamp)
+
+var databaseName = "otcs";
+var database = MSSQL.connect(
+    "jdbc:jtds:sqlserver://localhost/" :: databaseName ::
+    ";user=" :: Properties.get("mssql.username") ::
+    ";password=" :: Properties.get("mssql.password")
+);
+var lookupValue = "CatSet3";
+
+var types = getTypeMapping();
+var tables = MSSQL.query(
+    " SELECT *"::
+    " FROM sys.Tables"
+    , [], 30, database
+);
+
+foreach(t in tables){
+    System.print(t.name, "DEBUG");
+    var columns = MSSQL.query(
+        "SELECT * ":: 
+        " FROM sys.columns WHERE object_id = '" :: t.object_id :: "'", [], 30, database
+    );
+    foreach(c in columns) {
+        var columnType = types[c.user_type_id];
+        if(!Math.isNumber(lookupValue)&&columnType.superType=="number") {
+            //System.print(columnType);
+            continue;
+        }
+        if(columnType.superType=="other"||columnType.superType=="datetime") {
+            continue;
+        }
+        //System.print(columnType);
+        /*var checkStream = MSSQL.query(
+            "SELECT TOP 1 ":: c.name ::
+            " FROM " :: t.name
+            , [], 30, connection
+        );
+        foreach(r in checkStream) {
+            if(String.startsWith(r[c.name], "[Stream:")) {
+                columnType.stream=true;
+            } else {
+                columnType.stream=false;
+            }
+        }*/
+        
+        var convertedColumnName = c.name;
+        if(columnType.convert) {
+            convertedColumnName = "CONVERT(VARCHAR, " :: c.name :: ")";
+        }
+        
+        do{
+            var hits = MSSQL.query(
+                "SELECT TOP 1 * ":: 
+                " FROM " :: databaseName :: "." :: t.name::
+                " WHERE " :: convertedColumnName ::" = '" :: lookupValue :: "'"
+                , [], 30, database
+            );
+            foreach (h in hits){
+                System.print("Table name " ::t.name ::"\nColumn name " :: c.name );
+            }
+        } fail(e) {
+            0;
+        }
+    }
+}
+
+System.print("Robot finished");
+
+private function getTypeMapping() {
+    var typeTable = MSSQL.query("SELECT  * from sys.types");
+    var typeMapping = {};
+    foreach(type in typeTable) {
+        var superType = getSuperType(type.name);
+        var convert = getConvert(type);
+        
+        typeMapping[type.user_type_id] = {
+            "name" : type.name,
+            "superType" : superType,
+            "convert" : convert
+        };
+    }
+    return typeMapping;
+}
+
+private function getSuperType(typeName) {
+    if(String.matches(typeName,".*int.*|.*number.*|float|decimal|real|numeric")) {
+        return "number";
+    } else if(String.matches(typeName,".*text.*|.*char.*")) {
+        return "text";
+    } else if(String.matches(typeName,".*date.*|.*time.*")) {
+        return "datetime";
+    } else if(String.matches(typeName,".*binary.*|.*bit.*")) {
+        return "other";
+    } else {
+        return "other";
+    }
+}
+
+private function getConvert(type) {
+    if(String.matches(type.name,"text|varchar|ntext")) {
+       return true;
+    } else {
+        return false;
+    }
+}
+
+
+
+

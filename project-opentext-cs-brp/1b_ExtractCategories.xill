@@ -1,0 +1,56 @@
+use System, Date, String, Collection, Mongo, Assert, Properties, File, Stream, Concurrency;
+
+include project.extract.Extract as otcs;
+
+//-------------------------------------------------------------------------
+//						  SETUP
+//-------------------------------------------------------------------------
+
+var concurrencyRoot = "project/concurrency";
+// var threads = 4;
+
+//-------------------------------------------------------------------------
+//						  EXPORT
+//-------------------------------------------------------------------------
+
+// Start concurrent category extraction
+extractCategories();
+
+//-------------------------------------------------------------------------
+//						  FUNCTIONS
+//-------------------------------------------------------------------------
+
+function extractCategories() {
+    
+    // Start crawling provided root nodes
+    Concurrency.run([
+        // Provider
+        {
+            "robot": concurrencyRoot :: "/AggregateProvider.xill",
+            "config": {
+                "pipeline": [{
+                    "$match": {
+                        "original.roles.type": "categories",
+                        "migration.export.categories": {"$ne": true}
+                    }
+                }],
+                "options": {
+                    "batchSize": 100,
+                    "allowDiskUse": true,
+                    "noCursorTimeout": true
+                },
+                "printPerItem": 10
+            },
+            "threadCount": 1,
+        }
+        ,
+        {
+            "robot": concurrencyRoot :: "/extract/processCategories.xill",
+            "config": {
+                
+            },
+            // "threadCount": threads,
+        }
+        
+    ]);
+}

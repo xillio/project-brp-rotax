@@ -1,0 +1,151 @@
+/*
+Author: Marijn van der Zaag, Titus Nachbauer
+Last updated: 23-06-2016
+
+version 1.2
+
+Description:
+This robot saves all standard decorators to the cache, after which you can
+create content types with them.
+
+Usage: include the robot and call:
+	registerStandardDecorators("default");
+After that, you can use it to save a content type. For instance:
+	ContentType.save("file",["file","hash"],"default");
+	
+Make sure you do not use standard decorator names for custom decorators.
+*/
+use ContentType;
+
+
+// Registers the standard decorators
+function registerStandardDecorators(identity) {
+    var decoratorDefinitions = getDecoratorDefinitions();
+    foreach(name,definition in decoratorDefinitions) {
+    	newDecorator(name,definition, identity);
+    }
+}
+
+// Regusters a decorator with the given name and definition
+private function newDecorator(name, definition, identity) {
+	ContentType.decorator(name, definition, identity);
+}
+
+// Returns an object with all standard decorator definitions
+private function getDecoratorDefinitions() {
+    var decorators = {
+        "file" : {
+             "name" : {
+                  "type": "STRING",
+                  "required" : true
+             },
+             "extension" : {
+                  "type": "STRING",
+                  "required": true
+             },
+             "rawExtension" : {
+                  "type": "STRING",
+                  "required": false
+             },
+             "path" : {
+                  "type" : "STRING",
+                  "required" : true
+             },
+             "size": {
+                  "type" : "NUMBER",
+                  "required": true
+             }
+        },
+		"hash" : {
+		     "md5" : {
+		          "type" : "STRING",
+		          "required": true
+		     }
+		},
+		"mimeType" : {
+		     "type" : {
+		          "type" : "STRING",
+		          "required" : true
+		     }
+		},
+		"document" : {
+		    "title" : {
+		          "type" : "STRING",
+		          "required" : true
+		     },
+		     "author" : {
+		          "type" : "STRING",
+		          "required" : true
+		     }
+		},
+		"modified" : {
+		     "date" : {
+		          "type" : "DATE",
+		          "required" : true
+		     },
+		     "by" : {
+		          "type" : "STRING",
+		          "required" : false
+		     }
+		},
+		"created" : {
+		     "date" : {
+		          "type" : "DATE",
+		          "required" : true,
+		     },
+		     "by" : {
+		          "type" : "STRING",
+		         
+		          "required" : false,
+		     }
+		},
+		"parent" : {
+		     "id" : {
+		          "type" : "STRING",
+		          "required" : true
+		     },
+		     "path" : {
+		          "type" : "STRING",
+		          "required" : true
+		     }
+		},
+		"folder" : {
+		     "name": {
+		          "type": "STRING",
+		          "required": true
+		     },
+		     "path" : {
+		         "type": "STRING",
+		          "required": true
+		     }
+		},
+		"folderStatistics" : {
+		      "folderCount" : {
+		          "type" : "NUMBER",
+		          "required" : true
+		     },
+		     "fileCount" : {
+		          "type" : "NUMBER",
+		          "required" : true
+		     }
+		},
+		"permissions" : {
+		    "users" : {
+		        "type" : "LIST",
+		        "required" : true
+		    },
+		       
+		    "groups" : {
+		        "type" : "LIST",
+		        "required" : true
+		    }
+		},
+		"audit" : {
+		    "events" : {
+		        "type" : "LIST",
+		        "required" : true
+		    }
+	    }
+	};
+    return decorators;
+}

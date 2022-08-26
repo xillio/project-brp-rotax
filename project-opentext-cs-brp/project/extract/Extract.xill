@@ -1,0 +1,764 @@
+use System, Date, String, Collection, Mongo, Assert, Properties, File, Stream, Hash, Template;
+
+include connector.opentextcs.api.API as api;
+include config.mapping.otcs.Export as mapping;
+include project.commons.Timer as timer;
+include project.commons.Object as object;
+
+//-------------------------------------------------------------------------
+//						  SETUP
+//-------------------------------------------------------------------------
+
+var database = Mongo.connect(Properties.get("mongo.database"));
+var collectionName = "documents";
+
+var host = Properties.get("connector.opentext.export.host");
+var user = Properties.get("connector.opentext.export.user");
+var pass = Properties.get("connector.opentext.export.pass");
+
+var server = {
+	"apiUrl": host :: "/cs.exe/api/v1/",
+	"credentials": {
+		"username": user,
+		"password": pass
+	}
+};
+
+var startDepth = 0;
+var timeObj;
+var printPerItem = 10;
+var i = 0;
+
+//-------------------------------------------------------------------------
+//						  TESTING
+//-------------------------------------------------------------------------
+// extractUsers();
+// extract(2000);
+// var data1 = api->getNodeAudit(server, 14391);
+// var data2 = api->getNode(server, 58072);
+// var data2v = api->getVersions(server, 14391);
+// var data2v = api->getVersions(server, 58411);
+
+// var data = api->getVersionsLatest(server, 58072);
+// null;
+// var data = api->getAllMembers(server);
+// null;
+// foreach(doc in Mongo.find(collectionName, {
+//     // 'kind': 'Document',
+//     '_id': '2480440'
+//     })) {
+//     processRetention(doc);
+// }
+// null;
+
+test();
+
+function test() {
+    getProperties(Mongo.findOne(collectionName, {"_id": "27269"}));
+}
+
+
+
+
+//-------------------------------------------------------------------------
+//						  FUNCTIONS
+//-------------------------------------------------------------------------
+
+function extractUsers() {
+    
+    var pipeline = [{
+            "$project": {
+                "user": ["$original.created.by.systemName", "$original.modified.by.systemName", "$original.lastaccessed.by.systemName"]
+            }
+        },
+        {
+            "$unwind": "$user"
+        },
+        {
+            "$match": {
+                "user": {"$ne": null}
+            }
+        },
+        {
+            "$group": {
+                "_id": "$user"
+            }
+        }
+    ];
+    
+    var users = Mongo.aggregate(collectionName, pipeline, {}, database);
+    
+    foreach(u in users) {
+        
+        var member = api->getMember(server, u._id);
+        
+        var displayName = getUserDisplayName(member.firstName, member.middleName, member.lastName);
+        var email = getFirstEmailFromList([member.name, member.businessEmail]);
+        
+        foreach(type in ["created", "modified", "lastaccessed"]) {
+            var query = {"original." :: type :: ".by.systemName": u._id};
+            
+            var update = {
+                "original." :: type :: ".by.displayName": displayName,
+                "modified." :: type :: ".by.displayName": displayName,
+                "original." :: type :: ".by.email": email,
+                "modified." :: type :: ".by.email": email,
+            };
+            
+            Mongo.update(collectionName, query, {"$set": update}, {}, database);
+            
+        }
+        
+        System.print("Updated user " :: displayName :: " (" :: u._id :: ")");
+        
+    }
+    
+}
+private function getUserDisplayName(firstName, middleName, lastName) {
+    var names = [];
+    
+    if( firstName ){ names[] = firstName; }
+    if( middleName ){ names[] = middleName; }
+    if( lastName ){ names[] = lastName; }
+    
+    return String.join(names, " ");
+}
+private function getFirstEmailFromList(emails) {
+    foreach(email in emails) {
+        if( String.matches(email, "^([a-zA-Z0-9_\\-\\.]+)@([a-zA-Z0-9_\\-\\.]+)\\.([a-zA-Z]{2,5})$") ) {
+            return email;
+        }
+    }
+}
+
+
+function extractVersionInfo() {
+    // Start timer
+    timeObj = timer->start();
+
+    // Set nocursorTimeout to prevent cursor errors
+    var options = {
+        "noCursorTimeout": true,
+        "batchSize": 100
+    };
+    
+    // Only query the type FILE documents that have not yet been updated with versions
+    var documents = Mongo.find(collectionName, {
+        "original.container.hasChildren": {"$ne": "true"},
+        "original.roles.type": "versions",
+        "migration.export.versions": {"$ne": true}
+    }, {}, {}, options, database);
+    
+    // Process versions
+    foreach(document in documents) {
+        processVersionInfo(document);
+    }
+    
+}
+
+function extractCategories() {
+    // Start timer
+    timeObj = timer->start();
+
+    // Set nocursorTimeout to prevent cursor errors
+    var options = {
+        "noCursorTimeout": true,
+        "batchSize": 100
+    };
+    
+    // Only query the documents that have not yet been updated with categories
+    var documents = Mongo.find(collectionName, {
+        "original.roles.type": "categories",
+        "migration.export.categories": {"$ne": true}
+    }, {}, {}, options, database);
+    
+    // Process categories
+    foreach(document in documents) {
+        processCategories(document);
+    }
+    
+}
+
+// Extract function that crawls through parent/child nodes
+function extract(rootId) {
+    var root = {};
+    
+    // Start timer
+    timeObj = timer->start();
+
+    do {
+    
+        // Get provided root node information
+        System.print("Process root " :: rootId);
+    
+        var node = api->getNode(server, rootId);
+        
+        System.print("Process parentNode " :: node.parent_id);
+        
+        var parentNode = api->getNode(server, node.parent_id);
+        
+        var nodeAncestors = api->getNodeAncestors(server, parentNode.id);
+        var ancestors = getAncestors(nodeAncestors);
+        var startDepth = Collection.length(ancestors);
+        var rootPath = createParentPath(parentNode.id, nodeAncestors);
+        
+        // Process the parent first
+        var parent = processItem(parentNode, 0, rootPath, ancestors, startDepth);
+        
+        // Process the root second
+        root = processItem(node, parent._id, parent.original.fileSystem.path, parent.original.parent.ancestors, startDepth+1, true);
+    
+        // Recurse through the nodes
+        recurseNodes(root, startDepth+1);
+        
+    } fail(error) {
+        
+        System.print("Failed at rootId " :: rootId);
+        System.print(error);
+        
+    } success {
+        
+    } finally {
+        
+        // Update provided root node with export count
+        Mongo.updateOne(collectionName, {"_id": root._id}, {"$set": {"migration.analysis.exportCount": i}}, {}, database);
+        System.print(i);
+        
+    }
+    
+}
+
+
+function recurseNodes(parent, depth)
+{
+    recurseNodesFromId(parent._id, parent.original.fileSystem.path, parent.original.parent.ancestors, depth) ;
+    
+    if(parent.original.contentType.displayName=='Project')
+    {
+        recurseNodesFromId("-" :: @parent._id, parent.original.fileSystem.path, parent.original.parent.ancestors, depth) ;
+    }
+}
+
+
+function recurseNodesFromId(parentId, parentPath, parentAncestors, depth)
+{
+    var currentResult = {"next":1};
+    while(currentResult.next) {
+        
+        currentResult = getChildren(server, parentId, currentResult.next);
+        
+        if(currentResult!=null)
+        {
+            foreach(node in currentResult.data) {
+                
+                var document = processItem(node, parentId, parentPath, parentAncestors, depth);
+                
+                // Get child nodes if it's a container (folder of any type)
+                if( document.original.container && document.original.container.hasChildren == true ) {
+                    recurseNodes(document, depth+1);
+                } 
+            }
+        }
+        else
+        {
+            break;
+        }
+    }
+}
+
+
+function getChildren(server, parentId, page)
+{
+    do
+    {
+        return api->getNodeChildren(server, parentId, page);
+    }
+    fail(error)
+    {
+        // If parentId<0 we swallow the error. Otherwise re-raise
+        
+        if(parentId>0)
+        {
+            Assert.error(error.message) ;
+        }
+    }
+}
+
+
+function createHash(document) {
+    var update = {};
+    
+    do {
+        
+        // Download file if object is not a folder
+        if( document.original.file ) {
+        
+            // Get contents from API service
+            var contents = api->getNodeContent(server, document._id);
+            var md5Hash = Hash.toMD5(contents);
+            
+            // Create HASH
+            update["original.hash.md5"] = md5Hash;
+            update["modified.hash.md5"] = md5Hash;
+        }
+        
+        return document;
+        
+    } fail(error) {
+        
+        System.print("Node " :: document._id :: " failed with error: " :: error.message, "debug");
+        
+        update["migration.error"] = true;
+        update["migration.message"] = error.message;
+        
+    } success {
+        
+        // System.print(String.repeat("    ", depth) :: document.original.name.displayName);
+        
+        update["migration.export.hashed"] = true;
+          
+    } finally {
+        
+        Mongo.updateOne(collectionName, {"_id": document._id}, {"$set": update}, {"upsert": true}, database);
+        
+        showProgress();
+    }
+        
+    
+}
+
+
+function downloadContent(document) {
+    var update = {};
+    
+    do {
+        
+        // Download file if object is not a folder
+        if( document.original.file ) {
+            var versions = [];
+            
+            foreach(v in document.original.versions) {
+                var version = Collection.duplicate(v);
+            
+                // Get contents from API service
+                var filevalue = String.substring(@document._id, 0, 1) :: "/" :: document._id :: "/" :: version.id :: ".dat";
+                var path = Properties.get("project.content.directory") :: "/" :: filevalue;
+                
+                if( !File.exists(path) ) {
+                    
+                    var contents = api->getVersionContent(server, document._id, version.number);
+                    var target = File.openWrite(path);
+                    Stream.write(contents, target);
+                    changeDates(v, path);
+                }
+                
+                // Add new filevalue to version model
+                version.filevalue = filevalue;
+                
+                // Store version
+                versions[] = version;
+            }
+            
+            // Update versions
+            update["modified.versions"] = versions;
+            
+        }
+        
+        return document;
+        
+    } fail(error) {
+        
+        System.print("Node " :: document._id :: " failed with error: " :: error.message, "debug");
+        
+        update["migration.error"] = true;
+        update["migration.message"] = error.message;
+        
+        update["migration.export.downloadContent"] = false;
+        
+    } success {
+        
+        // System.print(String.repeat("    ", depth) :: document.original.name.displayName);
+        
+        update["migration.export.downloadContent"] = true;
+          
+    } finally {
+        
+        Mongo.updateOne(collectionName, {"_id": document._id}, {"$set": update}, {"upsert": true}, database);
+        
+        showProgress();
+    }
+        
+    
+}
+
+function changeDates(doc, path) {
+    var options = {
+        "templatesDirectory": "templates"
+    }; 
+    
+    var engine = Template.getEngine(options);
+    
+    var createdDate = Date.format(Date.parse(doc.createdDate, "yyyy-MM-dd'T'HH:mm:ss"), "dd-MM-yyyy HH:mm:ss");
+    var modifiedDate = Date.format(Date.parse(doc.modifiedDate, "yyyy-MM-dd'T'HH:mm:ss"), "dd-MM-yyyy HH:mm:ss");
+    var model = {
+        "createdDate": ""::createdDate,
+        "DateLastModified": ""::modifiedDate
+        };
+    var cfg = "C:\\Users\\GijsMaas\\Documents\\training\\project-opentext-cs-astral\\dateConfigFiles\\"::doc.id::".cfg";     
+    var output = File.openWrite(cfg);
+    Template.process("template.cfg", output, model, engine);
+    
+    if (File.exists(cfg)) {
+        var arguments = [];
+        arguments[] = "C:\\Users\\GijsMaas\\Documents\\training\\project-opentext-cs-astral\\tools\\BulkFileChanger.exe";
+        arguments[] = "/cfg";
+        arguments[] = cfg;
+        arguments[] = "/ChangeTimeAttrSingle";
+        arguments[] = path;
+        var newDates = System.exec(arguments);
+        null;
+    }
+    
+    // var arguments = [];
+    // var exe = "tools/BulkFileChanger.exe"
+}
+
+function getProperties(document) {
+    var update = {};
+    var properties = {};
+    
+    do {
+        
+        properties = api->getProperties(server, document._id);
+        
+        update["original.properties"] = properties;
+        update["modified.properties"] = properties;
+        
+    } fail(error) {
+        
+        System.print("Doc " :: document._id :: " failed with error: " :: error.message, "debug");
+        
+        update["migration.error"] = true;
+        update["migration.message"] = error.message;
+        
+        update["migration.export.properties"] = false;
+        
+    } success {
+        
+        // System.print("Extract properties info for doc " :: document._id);
+        
+        update["migration.export.properties"] = true;
+          
+    } finally {
+        
+        Mongo.updateOne(collectionName, {"_id": document._id}, {"$set": update}, {}, database);
+        
+    }
+}
+
+function getRoles(document) {
+    var update = {};
+    var roles = [];
+    
+    do {
+        
+        roles = getRoles(server, document._id);
+        
+        update["original.roles"] = roles;
+        update["modified.roles"] = roles;
+        
+    } fail(error) {
+        
+        System.print("Doc " :: document._id :: " failed with error: " :: error.message, "debug");
+        
+        update["migration.error"] = true;
+        update["migration.message"] = error.message;
+        
+        update["migration.export.roles"] = false;
+        
+    } success {
+        
+        System.print("Extract roles info for doc " :: document._id);
+        
+        update["migration.export.roles"] = true;
+          
+    } finally {
+        
+        Mongo.updateOne(collectionName, {"_id": document._id}, {"$set": update}, {}, database);
+        
+    }
+}
+private function getRoles(state, id) {
+    do {
+        return api->getNodeRoles(state, id);
+    }
+    
+    return [];
+}
+
+// Get version information for the document/node
+function processVersionInfo(document) {
+    var update = {};
+    var versions = [];
+    
+    do {
+        
+        versions = api->getVersions(server, document._id);
+        
+        if( versions ) {
+        
+            update["original.versions"] = versions;
+            update["modified.versions"] = versions;
+            
+        }
+        
+    } fail(error) {
+        
+        System.print("Doc " :: document._id :: " failed with error: " :: error.message, "debug");
+        
+        update["migration.error"] = true;
+        update["migration.message"] = error.message;
+        
+        update["migration.export.versions"] = false;
+        
+    } success {
+        
+        System.print("Extract version info for doc " :: document._id);
+        
+        update["migration.export.versions"] = true;
+          
+    } finally {
+        
+        Mongo.updateOne(collectionName, {"_id": document._id}, {"$set": update}, {}, database);
+        
+        showProgress();
+    }
+}
+
+
+// Get version information for the document/node
+function getPermissions(document) {
+    var update = {};
+    var permissions = [];
+    
+    do {
+        
+        permissions = api->getNodePermissions(server, document._id);
+        
+        if( permissions ) {
+        
+            update["original.permissions"] = permissions;
+            update["modified.permissions"] = permissions;
+            
+        }
+        
+    } fail(error) {
+        
+        System.print("Doc " :: document._id :: " failed with error: " :: error.message, "debug");
+        
+        update["migration.error"] = true;
+        update["migration.message"] = error.message;
+        
+        update["migration.export.permissions"] = false;
+        
+    } success {
+        
+        System.print("Extract permissions info for doc " :: document._id);
+        
+        update["migration.export.permissions"] = true;
+          
+    } finally {
+        
+        Mongo.updateOne(collectionName, {"_id": document._id}, {"$set": update}, {}, database);
+        
+    }
+}
+
+// private function hasRole(roles, roleType) {
+//     foreach(role in roles) {
+//         if( role.type == roleType ) {
+//             return true;
+//         }
+//     }
+    
+//     return false;
+// }
+
+
+
+// Get categories information for the document/node
+function processCategories(document) {
+    var update = {};
+    var categoryInfo = {};
+    
+    do {
+        
+        // Add categories
+        var categories = api->getNodeCategories(server, document._id);
+        
+        if( categories ) {
+            
+            // var nodeCategories = API->getNodeCategories(server, o.id);
+            foreach (catId, catName in categories) {
+                var nodeCategory = api->getNodeCategory(server, document._id, catId);
+                
+                categoryInfo[catName] = nodeCategory;
+            }
+            
+            update["original.categories"] = categoryInfo;
+            update["modified.categories"] = categoryInfo;
+            
+        }
+        
+    } fail(error) {
+        
+        System.print("Doc " :: document._id :: " failed with error: " :: error.message, "debug");
+        
+        update["migration.error"] = true;
+        update["migration.message"] = error.message;
+        
+        update["migration.export.categories"] = false;
+        
+    } success {
+        
+        System.print("Extract category info for doc " :: document._id);
+        
+        update["migration.export.categories"] = true;
+          
+    } finally {
+        
+        Mongo.updateOne(collectionName, {"_id": document._id}, {"$set": update}, {}, database);
+        
+        showProgress();
+    }
+}
+
+// Get categories information for the document/node
+function processRetention(document) {
+    var update = {};
+    
+    do {
+        
+        // Get retention information
+        var retentionInfo = api->getRMCData(server, document._id) ;
+        
+        if( retentionInfo && System.typeOf(retentionInfo) == LIST && Collection.length(retentionInfo) > 0 ) {
+            update["original.retention"] = retentionInfo[0];
+            update["modified.retention"] = retentionInfo[0];
+        }
+        
+    } fail(error) {
+        
+        System.print("Doc " :: document._id :: " failed with error: " :: error.message, "debug");
+        
+        update["migration.error"] = true;
+        update["migration.message"] = error.message;
+        
+        update["migration.export.retention"] = false;
+        
+    } success {
+        
+        System.print("Extract retention info for doc " :: document._id);
+        
+        update["migration.export.retention"] = true;
+          
+    } finally {
+        
+        Mongo.updateOne(collectionName, {"_id": document._id}, {"$set": update}, {}, database);
+        
+        showProgress();
+    }
+}
+
+
+//-------------------------------------------------------------------------
+//						  PRIVATE FUNCTIONS
+//-------------------------------------------------------------------------
+
+
+// Store node information
+private function processItem(node, parentId, parentPath, ancestors, depth) { return processItem(node, parentId, parentPath, ancestors, depth, false); }
+private function processItem(node, parentId, parentPath, ancestors, depth, isRoot) {
+    var document = {};
+    var update = {
+        "_id": @node.id
+    };
+    
+    do {
+        if( isRoot == true ) { update["migration.isRoot"] = true; }
+        
+        // Get Node roles from API (Roles are an indication for what endpoints are available for the node)
+        document.roles = api->getNodeRoles(server, node.id);
+        document.audits = api->getNodeAudit(server, node.id);
+        
+        // Map fields
+        document = mapping->mapObject(document, node, parentId, parentPath, ancestors, depth);
+        
+        update += object->toUpdateObject(document);
+        
+        return document;
+        
+    } fail(error) {
+        
+        System.print("Node " :: node.id :: " failed with error: " :: error.message, "debug");
+        
+        update["migration.error"] = true;
+        update["migration.message"] = error.message;
+        
+        update["migration.export.document"] = false;
+        
+    } success {
+        
+        System.print(String.repeat("    ", depth) :: document.original.name.displayName);
+        
+        update["migration.export.document"] = true;
+          
+    } finally {
+        
+        Mongo.updateOne(collectionName, {"_id": document._id}, {"$set": update, "$inc": {"update": 1}}, {"upsert": true}, database);
+        
+        showProgress();
+    }
+}
+
+private function getCurrentVersion(id, versions) {
+    
+    if( versions ) {
+        foreach(v in versions) {
+            if( v.id == id ) {
+                return v;
+            }
+        }
+    }
+    
+    Assert.error("No version found for this document");
+}
+
+// Shows progress of action
+private function showProgress() {
+    // if( i % printPerItem == 0 ) { 
+    //     System.print("Processed " :: i :: " items (speed: " :: timer->avgSpeed(timeObj, i) :: ")"); 
+    // }
+    i++;
+    
+}
+
+private function createParentPath(id, ancestors) {
+    var list = [];
+    foreach(ancestor in ancestors) {
+        if( ancestor.id != id ) {
+            list[] = ancestor.name;
+        }
+    }
+    return String.join(list, "/");
+}
+
+private function getAncestors(ancestors) {
+    var list = [];
+    
+    foreach(a in ancestors) {
+        list[] = {"id": @a.id};
+    }
+    
+    return list;
+}

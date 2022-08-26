@@ -1,0 +1,99 @@
+/*
+	Requested by Marijn, written by Thomas
+*/
+
+use Collection, System;
+
+
+var list = [1,2,5,"", {}, 5, [[1]], null, 5];
+removeEmptyElements(list);
+System.print(list);
+
+var obj = {"value": null, "list": [], "number": 4, "obj": {}, "child": [0]};
+removeEmptyElements(obj);
+System.print(obj);
+
+function removeEmptyElements(collection) {
+    
+    // First call this recursively on all child collections
+    foreach(key, value in collection) {
+        if(System.typeOf(value) != ATOMIC) {
+            removeEmptyElements(value);
+        }
+    }
+    
+    var keys = [];
+    
+    // Then we find all keys that should be removed
+    foreach(key, value in collection) {
+        if(value == [] || value == {} || value == null || value == "" || value == "cafebabe-cafe-babe-cafe-babecafebabe") {
+            keys[] = key;
+        }
+    }
+    
+    // And finally we remove them in reverse order so the list does not shift
+    var i = Collection.length(keys);
+    while(i --> 0) {
+        var key = keys[i];
+        Collection.remove(collection, key);
+    }
+}
+
+// works for any type of variable
+function hasValue(variable) {
+    foreach(item in variable) {
+        if(!(item == [] || item == {} || item == null || item == "" || item == "cafebabe-cafe-babe-cafe-babecafebabe")) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Give me a list of collections and I will join them!
+// In case any of them is null, it will of course be ignored and not stupidly string-concatenated or anything
+function mergeCollections(collections) {
+	var compoundCollection;
+	foreach(collection in collections) {
+		if(collection!=null) {
+			if(compoundCollection==null) {
+				compoundCollection = collection;
+			} else {
+				compoundCollection += collection;
+			}
+		}
+	}
+	return compoundCollection;
+}
+
+// Give me a list of variables, and I will return the first one that has content!
+function firstNonEmptyValue(list) {
+	foreach(item in list) {
+		if(item!=null&&item!=""&&item!=[]&&item!={}) {
+			return item;
+		}
+	}
+}
+
+function collectResults(iterator) {
+	var collection = [];
+	foreach(result in iterator) {
+		collection[] = result;
+	}
+	return collection;
+}
+
+//
+function filterListDuplicates(list) {
+	if(System.typeOf(list)!=LIST) {
+		System.print("filterListDuplicates needs a list","warning");
+		return list;
+	}
+	var newList = [];
+	foreach(item in list) {
+		if(!Collection.contains(newList,item)) {
+			newList[] = item;
+		}
+	}
+	return newList;
+}
+

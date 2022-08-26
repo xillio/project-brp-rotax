@@ -1,0 +1,65 @@
+use Collection, Mongo, MSSQL, Properties, System, String, Concurrency;
+
+include project.commons.Timer as timer;
+
+//-------------------------------------------------------------------------
+//						  SETUP
+//-------------------------------------------------------------------------
+
+var database = Mongo.connect(Properties.get("mongo.database"));
+var config = {"pipeline": [{
+                    "$match": {
+                        "original.container.hasChildren": {"$ne": true},
+                        // "migration.export.versions": true,
+                        // "migration.export.downloadContent": {"$ne": true}
+                    }
+                }],
+                "options": {
+                    "batchSize": 10,
+                    "allowDiskUse": true,
+                    "noCursorTimeout": true
+                },
+                "printPerItem": 10};
+argument data = Concurrency.testInput(config);
+
+//-------------------------------------------------------------------------
+//						  MAIN
+//-------------------------------------------------------------------------
+
+do {
+
+    var timeObj = timer->start();
+    
+    // Default settings
+    var collectionName = "documents";
+    var printPerItem = 100;
+    var itemTitle = "items";
+    
+    // Overwrite settings with config values
+    if(data.collectionName) { collectionName = data.collectionName; }
+    if(data.printPerItem) { printPerItem = data.printPerItem; }
+    if(data.itemTitle) { itemTitle = data.itemTitle; }
+    
+    // Run aggregate query on Mongo database
+    var documents = Mongo.aggregate(collectionName, data.pipeline, data.options, database);
+    
+    // Push item to the next stage
+    var i = 0;
+    foreach(document in documents) {
+        // Throw progress message
+        if( i % printPerItem == 0 ) { 
+            System.print("     Provided " :: i :: " " :: itemTitle :: " (speed: " :: timer->avgSpeed(timeObj, i) :: ")"); 
+        }
+        
+        Concurrency.push(document, data.output);
+        i++;
+    }    
+
+    System.print("      Done provided " :: i :: " items");
+    
+} fail(error) {
+
+    System.print(error);
+
+}
+

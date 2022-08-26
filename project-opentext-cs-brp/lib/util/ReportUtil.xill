@@ -1,0 +1,133 @@
+/**
+ * Project: Util Library
+ * Author: Titus Nachbauer
+ * Date: 2016-11-21
+ *
+ * ReportUtil.xill is a library of reusable functions related to migration reporting and profiling.
+ *
+ */
+ 
+use Mongo, Date, Properties, String; 
+
+var UDM_CONNECTION = Mongo.connect(Properties.get("db.name"));
+var UDM_COLLECTION_NAME = Properties.get("udm.collection");
+
+function getTotalTime(phase) {
+    var firstDoc = Mongo.findOne(UDM_COLLECTION_NAME, {}, {}, {"target.current.migration"::phase::"Started" : 1}, {}, UDM_CONNECTION);
+    var lastDoc = Mongo.findOne(UDM_COLLECTION_NAME, {}, {}, {"target.current.migration."::phase::"Finished" : -1}, {}, UDM_CONNECTION);
+    
+    if (lastDoc.target.current.migration[phase::"Finished"] != null && firstDoc.target.current.migration[phase::"Started"]) {
+        var totalTime = Date.diff(lastDoc.target.current.migration[phase::"Finished"], firstDoc.target.current.migration[phase::"Started"]);
+
+        return formatDateInfo(totalTime);
+    } else {
+        return "not executed yet";
+    }
+}
+
+function getAverageExtractionTime(sourceSystem) {
+    var query = {"target.current.migration.sourceSystem" : sourceSystem}; 
+    var firstDoc = Mongo.findOne(UDM_COLLECTION_NAME, query, {}, {"target.current.migration.extractionStarted" : 1}, {}, UDM_CONNECTION);
+    var lastDoc = Mongo.findOne(UDM_COLLECTION_NAME, query, {}, {"target.current.migration.extractionFinished" : -1}, {}, UDM_CONNECTION);
+    var count = Mongo.count(UDM_COLLECTION_NAME, query, UDM_CONNECTION);
+    
+    if (lastDoc.target.current.migration.extractionFinished != null && firstDoc.target.current.migration.extractionStarted) {
+        var timeTaken = Date.diff(lastDoc.target.current.migration.extractionFinished, firstDoc.target.current.migration.extractionStarted);
+
+        return formatDateInfoSeconds(timeTaken.totalSeconds / count);
+    } else {
+        return "not executed yet";
+    }
+}
+
+function getAverageTime(phase) {
+    var firstDoc = Mongo.findOne(UDM_COLLECTION_NAME, {}, {}, {"target.current.migration"::phase::"Started" : 1}, {}, UDM_CONNECTION);
+    var lastDoc = Mongo.findOne(UDM_COLLECTION_NAME, {}, {}, {"target.current.migration."::phase::"Finished" : -1}, {}, UDM_CONNECTION);
+    var count = Mongo.count(UDM_COLLECTION_NAME, {}, UDM_CONNECTION);
+    
+    if (lastDoc.target.current.migration[phase::"Finished"] != null && firstDoc.target.current.migration[phase::"Started"]) {
+        var timeTaken = Date.diff(lastDoc.target.current.migration[phase::"Finished"], firstDoc.target.current.migration[phase::"Started"]);
+
+        return formatDateInfoSeconds(timeTaken.totalSeconds / count);
+    } else {
+        return "not executed yet";
+    }
+}
+
+function getSystemAggregates() {
+    var pipeline = [
+        { 
+            "$group" : {
+                "_id" : "$target.current.migration.sourceSystem",  
+                "documentCount" : {"$sum" : 1},
+                "totalSize" : {"$sum" : "$target.current.file.size"},
+            }
+        }
+    ];
+    var aggregates = Mongo.aggregate(UDM_COLLECTION_NAME, pipeline, {}, UDM_CONNECTION);
+    var results = {};
+    foreach (systemInfo in aggregates) {
+        systemInfo.averageSize = systemInfo.totalSize / systemInfo.documentCount;
+        results[systemInfo._id] = systemInfo;
+    }
+    return results;
+}
+
+//Returns aggregate load statistics per date. USE WITH CARE! 
+//The explodeUDMDateField operation WILL have a performance impact as it touches all documents.
+function getLoadedPerDate() {
+    explodeUDMDateField("migration", "loadFinished");
+    
+    var pipeline = [
+        {
+            "$group" : {
+                "_id" : "$target.current.migration.loadFinishedDate",  
+                "documentCount" : {"$sum" : 1},
+                "totalSize" : {"$sum" : "$target.current.file.size"},
+            }
+        }
+    ];
+    var aggregates = Mongo.aggregate(UDM_COLLECTION_NAME, pipeline, {}, UDM_CONNECTION);
+    var results = {};
+    foreach (data in aggregates) {
+        data.averageSize = data.totalSize / data.documentCount;
+        results[data._id] = data;
+    }
+    return results;
+}
+
+function formatDateInfo(dateInfo) {
+    var formattedDate = String.format("%1$02d:%2$02d:%3$02d.%4$03d", [dateInfo.hours, dateInfo.minutes, dateInfo.seconds, dateInfo.millis]);
+    return formattedDate;
+}
+
+function formatDateInfoSeconds(seconds) {
+    var formattedDate = String.format("%1$02.3f", [seconds]);
+    return formattedDate;
+}
+
+//Extracts the date information from a date field for all documents matching documentFilter and adds fields for date, year, month, day, 
+//hour, minute and second to enable fine grained aggregations
+//fieldName has to exist inside decorator.
+private function explodeUDMDateField(decorator, fieldName) {
+    if (decorator == null || decorator == "") {
+        decorator = "migration";
+    }
+    
+    var field = "target.current." :: decorator :: "." :: fieldName;
+    
+    var query = {field : {"$ne" : null}};
+    var documents = Mongo.find(UDM_COLLECTION_NAME, query, {}, {}, {}, UDM_CONNECTION);
+
+    foreach (document in documents) {
+        var dateInfo = Date.info(document.target.current[decorator][fieldName]);
+        document.target.current[decorator][fieldName::"Date"] = dateInfo.year :: "-" :: dateInfo.monthOfYear :: "-" :: dateInfo.dayOfMonth;
+        document.target.current[decorator][fieldName::"Year"] = dateInfo.year;
+        document.target.current[decorator][fieldName::"Month"] = dateInfo.monthOfYear;
+        document.target.current[decorator][fieldName::"Day"] = dateInfo.dayOfMonth;
+        document.target.current[decorator][fieldName::"Hour"] = dateInfo.hourOfDay;
+        document.target.current[decorator][fieldName::"Minute"] = dateInfo.minuteOfHour;
+        document.target.current[decorator][fieldName::"Second"] = dateInfo.secondOfMinute;
+        Mongo.replaceOne(UDM_COLLECTION_NAME, {"_id" : document._id}, document, {}, UDM_CONNECTION);
+    }
+}

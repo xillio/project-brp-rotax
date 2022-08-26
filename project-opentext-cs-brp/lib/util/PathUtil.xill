@@ -1,0 +1,73 @@
+/**
+ * Project: demo_drupal_aem
+ * Author: Titus Nachbauer
+ * Date: 2016-06-29
+ *
+ * PathUtil.xill is a library of often used functions related to paths.
+ * It is recommended to include it through your project's Commons library.
+ */
+
+use System, String;
+
+//-------------------------------------------------------------------------
+//						  FUNCTIONS
+//-------------------------------------------------------------------------
+
+/**
+* Returs the path with all backslashes replaced by slashes
+*/
+function normalizeSlashes(path) {
+    return String.replace(path, "\\\\", "/");
+}
+
+// Get the extension from a file path
+function pathToExtension(path) {
+     var ext = String.replace(path, "(.*)([/\\\\])(.*\\.)([\\-0-9a-zA-Z]+)$", "$4");
+     // required because Xill returns the entire string if no match is found!
+     if (String.length(ext) == String.length(path)) {
+          ext = "__XILLIO_NO_FILE_EXTENSION_FOUND__";
+     }
+     return (ext);
+}
+
+/**
+* Extract the last element of a path 
+*/ 
+function pathToName(path) {
+     return String.replace(normalizeSlashes(path), "(.*[/\\\\])(.*)", "$2");
+}
+
+/**
+* Extract the parent path of an uri 
+*/
+function pathToParent(path) {
+     return String.replace(normalizeSlashes(path), "(.*[/\\\\])(.*)", "$1");
+}
+
+/**
+* Returns true if filename ends in .xill
+*/
+function isXillFile(filename) {
+     return String.matches(String.toLower(filename), ".*\\.xill");
+}
+
+function joinPaths(path1, path2)
+{
+    if(path1==null || path1=="")
+    {
+        return path2 ;
+    }
+    if(path2==null || path2=="")
+    {
+        return path1 ;
+    }
+    if(!String.endsWith(path1, "/") && !String.endsWith(path1, "\\"))
+    {
+        path1 = path1 :: "/" ;
+    }
+    if(String.startsWith(path2, "/") || String.startsWith(path2, "\\"))
+    {
+        path2 = String.substring(path2, 1) ;
+    }
+    return path1 :: path2 ;
+}

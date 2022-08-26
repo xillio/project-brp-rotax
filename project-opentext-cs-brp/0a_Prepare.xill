@@ -1,0 +1,56 @@
+use Mongo, Properties, System, File, Excel, String;
+
+var database = Mongo.connect(Properties.get("mongo.database"));
+
+Mongo.drop("documents", database);
+
+// Prepare indexes
+documentIndexes();
+
+//-------------------------------------------------------------------------
+//						  FUNCTIONS
+//-------------------------------------------------------------------------
+
+private function documentIndexes() {
+    System.print("Preparing indexes for database " :: Properties.get("mongo.database"));    
+    
+    // Index for database    
+    var indexes = {
+        "kind": {
+            "kind": 1
+        },
+        "container": {
+            "original.container.hasChildren": 1
+            
+        },
+        "mimeType": {
+            "original.mimeType.type": 1
+        },
+        "version": {
+            "original.version.tag": 1,
+        },
+        "roles": {
+            "original.roles.type": 1,
+        },
+        "export": {
+            "migration.export.categories": 1,
+            "migration.export.versions": 1,
+            "migration.export.permissions": 1,
+            "migration.export.binary": 1,
+        },
+        "ancestors": {
+            "original.parent.ancestors": 1
+        },
+        "modifiedby": {
+            "modified.modified.by.email": 1
+        },
+        "parentpath": {
+           "modified.parent.path":1
+        }
+    };
+    
+    foreach(key, index in indexes) {
+        Mongo.createIndex("documents", index, {"name": key}, database);
+    }
+    
+}

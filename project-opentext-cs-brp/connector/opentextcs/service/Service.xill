@@ -1,0 +1,244 @@
+use Collection, System;
+
+include connector.opentextcs.api.API as api;
+
+function createWorkspace(server, name, parentId, type, description, templateId) {
+    // The first function returns the workspaceTypes the folder is configured to create (see the steps to prepare the folder on the Astral.xill file)
+    var workspaceTemplates = api->getBusinessworkspaceTypes(server, parentId);
+    // to get the right details for the next call we need to find the right template in the workspaceTemplates.businessworkspacetypes array returned from the server
+    
+    var workspaceDetails = {"parentId": parentId};
+    if (templateId) {workspaceDetails["templateId"] = templateId;} 
+    if (Collection.length(workspaceTemplates.businessworkspacetypes)==0 && !templateId) {
+        System.print("Please check OpenTextContentServer for templateId of workspaceType and provide manually");
+        return;
+    }
+    foreach (wstype in workspaceTemplates.businessworkspacetypes) {
+        if (wstype.name == type) {
+            workspaceDetails["wkspTypeId"] = wstype.id;
+            workspaceDetails["templateId"] = wstype.templates[0].id;
+        }
+    }
+    
+    // Next we do one more get request to get the necessary data about the categories associated with the workspaceType
+    var templateDetails = api->getWorkspaceTemplateDetails(server, workspaceDetails);
+    // To create a new workspace through the api make sure the body is filled with 
+    // all the necessary info stored in the templateDetails from the previous function 
+    
+    // Get categories from templateDetails if workspaceType has categories
+    var categories = null;
+    if (Collection.length(templateDetails.data)>0) {
+        categories = templateDetails.data;
+    }
+    
+    // foreach (k,v in categories) {
+    //     foreach (key, value in v) {
+    //         if(value=="TestAstralKey") {
+    //             value="newValue";
+    //         }
+    //     }
+        
+    // }
+    
+    // required values
+    var body = {
+        "name": name,
+        "parent_id": parentId,
+        "type": 848,
+        "mime_type": "Business Workspace",
+    };
+    
+    if (templateId) {
+        body["template_id"] = templateId;
+    } else if (workspaceDetails.templateId) {
+        body["template_id"] = workspaceDetails.templateId;
+    } else {
+       System.print("Please check OpenTextContentServer for templateId of workspaceType and provide manually");
+        return;
+    }
+    //optional values
+    if (description) {body["description"] = description;}
+    if (categories) {body["categories"] = categories;}
+    
+    // With all the necessary values in our body we can create the actual business workspace
+    var workspace = api->createWorkspace(server, body);
+    
+    // return the workspace to be able to update the workspace through the API
+    
+    return workspace;
+}
+
+function getCategories(server, nodeId) {
+    var categoryObj = api->getNodeCategories(server, nodeId);
+    var categoryId;
+    var categoryData = {};
+    foreach (k, v in categoryObj) {
+        categoryId = k;
+        categoryData[k] = {};
+        categoryData[k] = api->getNodeCategory (server, nodeId, categoryId);
+    }
+    
+    return categoryData;
+}
+
+function createDocumentInWorkspace(server, name, description, parentId, path) {
+    return api->createNode(server, name, description, 144, parentId, path, "application/msword");
+}
+
+/*
+ * Example:
+ * var nodeId = service->createEmail(server, "Email-message.msg", "Description...", 2000, "D:/Share/Email-message.msg"); 
+ */
+function createEmail(server, name, description, parentId, path) {
+    return api->createNode(server, name, description, 749, parentId, path, "Email");
+}
+
+/*
+ * Example:
+ * var result = service->createShortcut(server, "test shortcut", "test", 31444, 31221); 
+ */
+function createShortcut(server, name, description, parentId, originalId) {
+    return api->createShortcut(server, name, description, originalId, parentId);
+}
+
+
+/*
+ * Example:
+ * var xrefResult = service->createXref(server, 31222, 21538, "ASSETSTORAGEPERSPECTIVE");
+ */
+function createXReference(server, nodeId, refNodeId, refType) {
+    return api->createXref(server, nodeId, refNodeId, refType);
+}
+
+function updateOwnerPermissions(server, nodeId, permissions, right_id, apply_to, include_sub_types) {
+    return updatePermissions(server, "nodes/" :: nodeId :: "/permissions/owner", nodeId, permissions, right_id, apply_to, include_sub_types);
+}
+function updateOwnerPermissions(server, nodeId, permissions, right_id, apply_to) { return updateOwnerPermissions(server, nodeId, permissions, right_id, apply_to, null); }
+function updateOwnerPermissions(server, nodeId, permissions, right_id) { return updateOwnerPermissions(server, nodeId, permissions, right_id, null, null); }
+function updateOwnerPermissions(server, nodeId, permissions) { return updateOwnerPermissions(server, nodeId, permissions, null, null, null); }
+
+function updateMemberPermissions(server, nodeId, permissions, right_id, apply_to, include_sub_types) {
+    return updatePermissions(server, "nodes/" :: nodeId :: "/permissions/owner", nodeId, permissions, right_id, apply_to, include_sub_types);
+}
+function updateMemberPermissions(server, nodeId, permissions, right_id, apply_to) { return updateOwnerPermissions(server, nodeId, permissions, right_id, apply_to, null); }
+function updateMemberPermissions(server, nodeId, permissions, right_id) { return updateOwnerPermissions(server, nodeId, permissions, right_id, null, null); }
+
+function updateGroupPermissions(server, nodeId, permissions, right_id, apply_to, include_sub_types) {
+    return updatePermissions(server, "nodes/" :: nodeId :: "/permissions/group", nodeId, permissions, right_id, apply_to, include_sub_types);
+}
+function updateGroupPermissions(server, nodeId, permissions, right_id, apply_to) { return updateGroupPermissions(server, nodeId, permissions, right_id, apply_to, null); }
+function updateGroupPermissions(server, nodeId, permissions, right_id) { return updateGroupPermissions(server, nodeId, permissions, right_id, null, null); }
+function updateGroupPermissions(server, nodeId, permissions) { return updateGroupPermissions(server, nodeId, permissions, null, null, null); }
+
+function updatePublicPermissions(server, nodeId, permissions, apply_to, include_sub_types) {
+    return updatePermissions(server, "nodes/" :: nodeId :: "/permissions/public", nodeId, permissions, null, apply_to, include_sub_types);
+}
+function updatePublicPermissions(server, nodeId, permissions, apply_to) { return updatePublicPermissions(server, nodeId, permissions, apply_to, null); }
+function updatePublicPermissions(server, nodeId, permissions) { return updatePublicPermissions(server, nodeId, permissions, null, null); }
+
+// function updateCustomPermissions(server, nodeId, permissions, right_id, apply_to, include_sub_types) {
+//     return updatePermissions(server, "nodes/" :: nodeId :: "/permissions/custom/", nodeId, permissions, right_id, apply_to, include_sub_types);
+// }
+// function updateCustomPermissions(server, nodeId, permissions, right_id, apply_to) { return updateCustomPermissions(server, nodeId, permissions, right_id, apply_to, null); }
+// function updateCustomPermissions(server, nodeId, permissions, right_id) { return updateCustomPermissions(server, nodeId, permissions, right_id, null, null); }
+// function updateCustomPermissions(server, nodeId, permissions) { return updateCustomPermissions(server, nodeId, permissions, null, null, null); }
+
+/*
+ * Example:
+ * var permissions = ["add_items", "delete", "delete_versions", "edit_attributes", "edit_permissions", "modify", "reserve", "add_major_version", "see", "see_contents"]
+ * var xrefResult = service->updatePermissions (server, 31222, "group", permissions, right_id);
+ *
+ */
+function updatePermissions(server, url, nodeId, permissions, right_id, apply_to, include_sub_types) {
+    var body = {"permissions": permissions};
+    
+    if( right_id ) { body.right_id = right_id; }
+    if( apply_to ) { body.apply_to = apply_to; }
+    if( include_sub_types ) { body.include_sub_types = include_sub_types; }
+
+    return api->updatePermissions (server, url, body);
+}
+function updatePermissions(server, nodeId, permissionType, permissions, right_id, apply_to) { return updatePermissions(server, nodeId, permissionType, permissions, right_id, apply_to, null); }
+function updatePermissions(server, nodeId, permissionType, permissions, right_id) { return updatePermissions(server, nodeId, permissionType, permissions, right_id, null, null); }
+function updatePermissions(server, nodeId, permissionType, permissions) { return updatePermissions(server, nodeId, permissionType, permissions, null, null, null); }
+
+function addCustomPermissions(server, nodeId, permissions, right_id, apply_to, include_sub_types) {
+    var body = {"permissions": permissions};
+    
+    if( right_id ) { body.right_id = right_id; }
+    if( apply_to ) { body.apply_to = apply_to; }
+    if( include_sub_types ) { body.include_sub_types = include_sub_types; }
+
+    return api->addCustomPermissions (server, "nodes/" :: nodeId :: "/permissions/custom", body);
+}
+function addCustomPermissions(server, nodeId, permissions, right_id, apply_to) { return addCustomPermissions(server, nodeId, permissions, right_id, apply_to, null); }
+function addCustomPermissions(server, nodeId, permissions, right_id) { return addCustomPermissions(server, nodeId, permissions, right_id, null, null); }
+
+
+function addCategoryToWorkspace(server, workspaceId, categoryId, default, body) {
+    if (default) {
+        var category = api->addNodeCategory (server, workspaceId, categoryId);
+        if (category) {
+            return true;
+        } else { 
+            return false;
+        }
+    } else {
+        var category = api->addNodeCategory (server, workspaceId, categoryId, body);
+        if (category) {
+            return true;
+        } else { 
+            return false;
+        }
+    }
+    
+}
+
+// function updateBWSCategories(server, workSpaceId, currentCategories) {
+//     var updatedCategories;
+//     do {
+//         foreach (k, v in currentCategories) {
+//             var categoryId = k;
+//             foreach (key, value in v) {
+//                 var newValue;
+//                 if (value.type == "String") {
+//                     newValue = "updatedString";
+//                 } else if (value.type == "Integer"){
+//                     newValue = 100;
+//                 } else if (value.type == "Date") {
+//                     newValue = Date.change(Date.now(), {"DAYS": -3});
+//                 }
+//                 if (value.required) {
+//                     Assert.notNull(newValue);
+//                 }
+//                 var updatedCategory = {
+//                     key: newValue
+//                 };
+//                 var update = api->updateBWSCategory(server, workSpaceId, categoryId, updatedCategory);
+//             }
+//         }
+//     } fail (e) {
+//         System.print(e);
+//         updatedCategories = false;
+//     } success {
+//         updatedCategories = true;
+//     } 
+//     return updatedCategories;
+// }
+
+
+/*
+ * Example:
+ * var folderId = service->createFolder(server, "Folder A", parentId); 
+ */
+function createFolder(server, name, parentId) {
+    return api->createNode(server, name, "", 0, parentId, null, null);
+}
+
+function createEmailFolder(server, name, parentId) {
+    return api->createNode(server, name, "", 751, parentId, null, null);
+}
+
+function createURL(server, name, url, parentId) {
+    return api->createURL(server, name, "", 140, parentId, null, null, url);
+}

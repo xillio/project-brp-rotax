@@ -1,0 +1,203 @@
+use System, Date, String, Collection, Mongo, Assert, Properties, File, Stream, Hash;
+
+include connector.opentextcs.api.API as api;
+include connector.opentextcs.service.Service as service;
+
+//-------------------------------------------------------------------------
+//						  SETUP
+//-------------------------------------------------------------------------
+
+var database = Mongo.connect(Properties.get("mongo.database"));
+var collectionName = Properties.get("mongo.collection");
+
+var host = Properties.get("connector.opentext.export.host");
+var user = Properties.get("connector.opentext.export.user");
+var pass = Properties.get("connector.opentext.export.pass");
+
+var server = {
+	"apiUrl": host :: "/cs.exe/api/v1/",
+	"apiUrl2": host :: "/cs.exe/api/v2/",
+	"credentials": {
+		"username": user,
+		"password": pass
+	}
+};
+
+var startDepth = 0;
+var timeObj;
+var printPerItem = 10;
+var i = 0;
+
+//-------------------------------------------------------------------------
+//						  TESTING
+//-------------------------------------------------------------------------
+
+// create new business workspace instance through api
+// Important: First make sure that you have a workspace type configured. Follow these steps in the opentext GUI to configure your opentext environment
+// 1: Create workspacetype
+//      Go to Enterprise->Connected Workspaces (for the opentext documentation click on the ? and select 'For this page').
+//      Create the workspacetype to the requirements of your organization by adding item in Workspace Types folder
+//          Concerns: 
+//              General: Location (select a folder in the enterprise workspace where the business workspaces will be created), categories, naming convention etc.
+//              Advanced: Indexing workspace attributes
+// 2: Add or select classification tree for workspace type (Usually you create a new tree for every workspace type)
+// 3: Configure Template settings. Go to Admin->Content Server Administration -> Document Templates Administration -> Configure CS Document Templates
+//      Check if Managed Object Types contains business workspaces (type 848) by clicking configure. 
+//      Afterwards select the right classification tree and save changes
+// 4: Add document template in Enterprise->Document Templates:
+//      Click add item, add name the workspace type and classification tree (optional: categories).
+//      Add folders or files you would like all instances to have
+// 5: Check whether you can create the workspace manually at the location specified in the workspace type
+
+// The only values you need to have is the folderId of the location where the workspacetype will be created 
+// or workspaceParentID and a name for the workspace instance (can be any string you like)
+// and provide these values in the createWorkspace function below.
+// You also need to know the name of the workspaceType created in step 1 to get the right template
+// The function returns the id of the newly created workspace which you can use to update the workspace
+// you also need to provide the server object with the configuration to call the api
+
+// api->deleteNode(server, 35324  );
+// TP-2 (and TP-4 where categories are inherited)
+var workspaceParentId = 35760; //required; Folder where workspaces will be created
+var workspaceName = "TestACLupgrade"; // required; name of new workspaceInstance
+var workspaceTypeName = "TestWithCategories"; // required; name of workspaceType created in step 1
+var workspaceDescription = ""; //optional, takes a string to describe the workspace
+var workspaceTemplateId = null; //optional, use templateId from opentext if you have it (see document templates for id (not workspace types!))
+var workspace = service->createWorkspace(server, workspaceName, workspaceParentId, 
+                        workspaceTypeName, workspaceDescription, workspaceTemplateId);
+var workSpaceId = workspace.id;
+// var workSpaceId = 34551; 
+
+
+
+// TP-3 create Folder, document and email
+// With our workspace created we can fill up our workspace with new folders, files, mails, shortcuts etc.
+
+var folderName = "testFolder";
+var folder = service->createFolder(server, folderName, workSpaceId);
+var subfolder = service->createFolder(server, folderName, folder);
+var documentPath = 'testing/document.docx';
+var docName = "documentTest";
+var document = service->createDocumentInWorkspace(server, docName, "Description...", folder, documentPath);
+var subdocument = service->createDocumentInWorkspace(server, docName, "Description...", subfolder, documentPath);
+
+// TP-8 Email folder type 
+var emailFolder = service->createEmailFolder(server, "EmailFolder", workSpaceId);
+
+// TP-6 Email with attachment TP-7 MIME type (application/x-outlook-msg)
+var email = service->createEmail(server, "Testmail", "Test mail with attachment", emailFolder, "testing/Testmail for AstralConsulting witj Attachment.msg" );
+
+
+// TP-4 Add and update categories directly to workSpace
+var categoryId = 34334; // The categoryId we want to add to the workspace
+// If defaultCategory is true, it takes all the values from the template
+// If defaultCategory is false, provide the categoryBody with attributeId and new Value
+var defaultCategory = true;
+var catBody = {};
+// Build the catBody so that every key is the attributeId and the value is the new value you want to attach to the workspace
+// For info about the category please go to the opentext environment and check the categories 
+if (!defaultCategory) {
+    catBody = {
+        "34334_2": ["TestNewStringValue","TestNewStringValue1","TestNewStringValue2","TestNewStringValue3"]
+    };
+}
+var category = service->addCategoryToWorkspace(server, workSpaceId, categoryId, defaultCategory, catBody);
+if (!category) {
+    System.print("Failed to add category to node");
+}
+catBody = {
+    "TestAddCatDirectly": ["TestNewStringValue","TestNewStringValue1","TestNewStringValue2","TestNewStringValue3"]
+};
+var addCategory = api->addNodeCategory(server, document, categoryId);
+var updatedCategory = api->updateNodeCategory(server, document, categoryId, catBody);
+// var updatedCategories = service->updateBWSCategories(server, workSpaceId, currentCategories);
+// TP-5 Add Permissions 
+
+var arthur = 13415;
+var right_id = 13414;
+var owner = 1000;
+var apply_to = 2; // default = 0 Permission update only applies to this item
+// set apply_to to 1 to update all the sub-items, 
+// set apply_to to 2 for this item plus all sub-items, 
+// set apply_to to 3 for this item plus immediate sub-items that aren't containertypes (documents)
+var permResult = service->updateOwnerPermissions(server, folder, ["delete_versions"], owner, apply_to);
+var permResult0 = service->updateMemberPermissions(server, folder, ["delete_versions", "delete", "add_items"], arthur, apply_to);
+var permResult1 = service->updateGroupPermissions(server, folder, ["delete_versions"], right_id, apply_to);
+var permResult2 = service->updatePublicPermissions(server, folder, ["delete_versions"], apply_to);
+var permResult3 = service->addCustomPermissions(server, folder, ["see", "see_contents"], right_id, apply_to);
+
+// TP-9 Link internal (shortcut)
+
+var shortcutNodeId = service->createShortcut(server, "Shortcut to email", "Description...", workSpaceId, email);
+
+//  TP-10 Link external (URL)
+
+var url = "https://xillionl.sharepoint.com/ps/PSPhotos/Forms/Thumbnails.aspx?id=%2Fps%2FPSPhotos%2FPanorama%20vide%2Ejpeg&parent=%2Fps%2FPSPhotos";
+var externalRef = service->createURL(server, "externalLink", url, workSpaceId);
+
+api->deleteNode(server, workSpaceId);
+
+
+// var xillioPermType = "group";
+
+// // var testId = 28371;
+// // var nodePerms = api->getNodePermissions(server, testId);
+
+// var emailParentId = 27276;
+// var crossRefParentId = 27796;
+
+// // Create email
+// var emailNodeId = service->createEmail(server, "Reminder Company Update at 4.msg", "Description...", emailParentId, "email/Reminder Company Update at 4.msg"); 
+// var emailNode = api->getNode(server, emailNodeId);
+
+// var xrefFolder = service->createFolder(server, xrefFolderName, workSpaceId);
+
+// // Delete nodes
+// api->deleteNode(server, emailNodeId);
+// api->deleteNode(server, shortcutNodeId);
+
+// // Create cross-reference
+// var folderIdA = service->createFolder(server, "Folder A", crossRefParentId); 
+// var folderIdB = service->createFolder(server, "Folder B", crossRefParentId); 
+
+// var crossRefType = "ASSETSTORAGEPERSPECTIVE";
+// var xrefResult = service->createXReference(server, folderIdA, folderIdB, crossRefType);
+
+
+
+
+// // var permResult = service->updatePermissions(server, folderIdA, "group", ["delete_versions"], right_id);
+// // var permResult = service->updatePermissions(server, folderIdA, "group", ["delete_versions"], right_id);
+// // var permResult = service->updatePermissions(server, folderIdA, "group", ["delete_versions"], right_id);
+// // var permResult = service->updateGroupPermissions(server, folderIdA, ["delete_versions"], right_id);
+// // var permResult = service->updatePublicPermissions(server, folderIdA, ["delete_versions"], right_id);
+// // var permResult = service->updateCustomPermissions(server, folderIdA, ["delete_versions"], right_id);
+// // var permResult = service->updateCustomPermissions(server, folderIdA, ["delete_versions"], right_id);
+// null;
+
+// // Delete nodes
+// api->deleteNode(server, folderIdA);
+// api->deleteNode(server, folderIdB);
+
+// // extractUsers();
+// // extract(2000);
+// // var data1 = api->getNodeAudit(server, 14391);
+
+
+
+
+// // var perms = api->getNodePermissions(server, 10462);
+// // var permsUpdRes = api->updateGroupPermissions(server, 10462, 13414);
+
+
+
+
+// // var nodeResult = api->createNode(server, "Biljetter Vasamuseet.eml", "Testing an email file", 749, 31443, "C:\\Users\\ArthurvanderWal\\Desktop\\Biljetter Vasamuseet.eml", "Email"); 
+
+
+
+
+// null;
+
+
+

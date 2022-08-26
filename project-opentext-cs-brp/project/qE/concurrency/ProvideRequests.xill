@@ -1,0 +1,32 @@
+use Collection, Mongo, MSSQL, Properties, System, String, Concurrency;
+
+include project.qE.commons.Helper as helper;
+
+//-------------------------------------------------------------------------
+//						  SETUP
+//-------------------------------------------------------------------------
+
+
+var config = {};
+argument data = Concurrency.testInput(config);
+
+//-------------------------------------------------------------------------
+//						  MAIN
+//-------------------------------------------------------------------------
+
+
+while(helper->requestsInQueue()) {
+    
+    var requests = helper->getRequestsForProcessing();
+    
+    foreach(request in requests) {
+        
+        Concurrency.push(request, data.output);
+        
+        helper->requestProvided(request);
+    }
+    
+    System.wait(100);
+}
+
+

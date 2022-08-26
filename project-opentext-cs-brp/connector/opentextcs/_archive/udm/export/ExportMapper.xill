@@ -1,0 +1,295 @@
+use System, String, Collection, Stream, Date, Mongo;
+
+include connector.opentextcs.Commons as opentextcsCommons;
+
+var usersTableName = "KUAF";
+
+
+function exportMappingFromDatabase(object) {
+    consumeStreams(object);
+    var contentType = "default";
+    var mapping = {
+        "name"      : {
+            "displayName"   : object.Name,
+            "systemName"    : object.Name
+        },
+        "parent" : {
+            "id"    : object.ParentId,
+            "path" : object.parentPath
+        }
+    };
+    
+    mapping.contentType = {
+        "systemName" : object.Subtype,
+        "displayName" :  opentextcsCommons->mapSubType(object.Subtype)
+    };
+    
+    if(object.CHILDCOUNT>0 || opentextcsCommons->isContainer(mapping.contentType.displayName)) {
+        contentType = "Container";
+        mapping.container = {
+            "hasChildren" : object.ChildCount>0,
+            "childCount" : object.ChildCount
+        };
+    } else {
+        contentType = "Document";
+    }
+    
+    if (object.CreateDate != null){
+        if (object.CreatedBy != null){
+            mapping.created = {
+                "date"  : object.CreateDate,
+                "by"    : {
+                    "systemName" : object.CreatedBy,
+                    "displayName" : mapUser(object.CreatedBy)
+                }
+            };
+        }else{
+            mapping.created = {
+                "date"  : object.CREATEDATE,
+            };
+        }
+    }
+    
+    if (object.ModifyDate != null){
+        if (object.ModifiedBy != null){
+            mapping.modified = {
+                "date"  : object.ModifyDate,
+                "by"    : {
+                    "systemName" : object.ModifiedBy,
+                    "displayName" : mapUser(object.ModifiedBy)
+                }
+            };
+        }else{
+            mapping.modified = {
+                "date"  : object.ModifyDate,
+            };
+        } 
+    }
+    
+    mapping.opentext = {
+        "DComment" : object.DComment,
+        "ExtentedData" : object.ExtentedData,
+        "GUID" : object.guid, // lower case guid is filled with workaround
+        "DataID" : object.DataID,
+        "OriginDataID": object.OriginDataID,
+        //"ProviderData" : object.providerData
+    };
+    
+    var versionHistory = addVersionSpecificMetadata(object,mapping);
+    mapping.versionHistory = versionHistory;
+    
+    var entity = {
+        "xdip"      : object.xdip,
+        "kind"      : contentType,
+        "original"  : mapping,
+        "audit"     : object.audit,
+        "permissions" : object.permissions,
+        "migration" : {
+            "last action" : "Export",
+            "date" : Date.now(),
+            "migrate" : "unknown",
+            "latestVersionsFound": mapping.version.latestVersionsFound
+        },
+        "modified"  : {}
+    };
+    return entity;
+}
+
+private function mapUser(systemName) {
+    var user = Mongo.findOne(usersTableName, {"OwnerId" : systemName});
+    if(user) {
+        return user.Name;
+    }
+}
+
+private function addVersionSpecificMetadata(source,mapping) {
+    var versioned = true;
+    if(!source.versions || Collection.length(source.versions)==0) {
+        versioned = false;
+    }
+    // what's stored per version? 
+    /*
+    - Version number, simply called 'Version'
+    - Categories metadata (but it seems there are no versions for folders)
+    - FileName
+    - Created and Modified dates VerCDate and VerMDate
+    - DataSize
+    - FileCDate and FileMDate
+    - FileType (=extension?)
+    - VerComment
+    - MimeType
+    - VerMajor
+    - VerMinor
+    - VersionID
+    
+    */
+    var firstVersionMappingDuplicate = Collection.duplicate(mapping);
+    var versionHistory = [];
+    if(!versioned)
+    {
+        mapOnlyVersion(mapping,source);
+    }
+    
+    var latestVersionsFound = 0 ;
+    foreach(i, version in source.versions) {
+        if(isLatestVersion(source, version))
+        {
+            mapVersion(mapping,version);
+            latestVersionsFound += 1 ; // Found documents with multiple versions with the same number. Better keep some records on this.
+        }
+        else
+        {
+            versionHistory[] = mapVersion(Collection.duplicate(firstVersionMappingDuplicate), version);
+        }
+    }
+    
+    mapping.version.latestVersionsFound = latestVersionsFound ;
+    return versionHistory;
+}
+
+
+private function isLatestVersion(dtreerecord, dversrecord)
+{
+    return dversrecord.Version+0 == dtreerecord.VersionNum+0 ;
+}
+
+
+private function mapVersion(mapping,version) {
+    
+    mapping.version = {
+        "id" : version.VersionId,
+        "number" : version.Version,
+        "minorVersion" : version.VerMinor,
+        "majorVersion" : version.VerMajor,
+        "comment" : version.VerComment
+    };
+    
+    mapping.opentext.categories = mapCategories(version.categories);
+    mapping.opentext.ProviderData = version.providerData;
+    mapping.file = {
+        "name" : version.FileName,
+        "createdDate" : version.FileCDate,
+        "modifiedDate" : version.FileMDate,
+        "size" : version.DataSize,
+        "extension" : version.FileType,
+        "mimeType" : version.MimeType
+    };
+    mapping.created.date = version.VerCDate;
+    mapping.modified.date = version.VerMDate;
+    
+    return mapping;
+}
+
+private function mapOnlyVersion(mapping,version) {
+    mapping.version = {
+        "id" : version.DataId,
+        "number" : version.VersionNum,
+        "minorVersion" : version.Minor,
+        "majorVersion" : version.Major,
+    };
+    mapping.opentext.categories = mapCategories(version.categories);
+}
+
+private function mapCategories(categories) {
+    if(categories.Project&&categories.Project["Project Director"]) {
+        categories.Project["Project Director DisplayName"] = mapUser(categories.Project["Project Director"]);
+    }
+    if(categories.Project&&categories.Project["Project Manager"]) {
+        categories.Project["Project Manager DisplayName"] = mapUser(categories.Project["Project Manager"]);
+    }
+    return categories;
+}
+
+function exportMapping(object){
+    var contentType = "file";
+    var mapping = {
+        "name"      : {
+            "displayName"   : object.name,
+            "systemName"    : object.name
+        },
+        "parent" : {
+            "id"    : getParent(object.xdip)
+        }
+    };
+    if (object.type != null){
+        mapping.contentType = {
+            "name" : object.type
+        };
+    }
+    if (object.container){
+        mapping.container = {
+            "hasChildren":true
+        };
+        contentType = "folder";
+    }
+    if (object.typeName != null){
+        mapping.contentType = {
+            "name" : object.typeName    
+        };
+    }
+    if (object.createdDate != null){
+        if (object.createdBy != null){
+            mapping.created = {
+                "date"  : object.createdDate,
+                "by"    : {
+                    "systemName" : object.createdBy
+                }
+            };
+        }else{
+            mapping.created = {
+                "date"  : object.createdDate,
+            };
+        } 
+    }
+    if (object.description != null){
+        mapping.description = {
+            "short"     : object.description
+        };
+    }
+    if (!object.container){
+        mapping.file = {
+            "rawExtension"  : "",
+            "size"          : 0
+        };
+    }
+    if (object.modifiedDate != null){
+        if (object.modifiedBy != null){
+            mapping.modified = {
+                "date"  : object.modifiedDate,
+                "by"    : {
+                    "systemName" : object.modifiedBy
+                }
+            };
+        }else{
+            mapping.modified = {
+                "date"  : object.modifiedDate,
+            };
+        } 
+    }
+    var entity = {
+        "xdip"      : object.xdip,
+        "kind"      : contentType,
+        "original"  : mapping,
+        "modified"  : mapping
+    };
+    return entity;
+} 
+
+private function getParent(xdip){
+    var parent = String.regex(xdip, "(xdip://\\w+/.*)?(/.*)");
+    if (parent == null){
+        return "root";
+    }else{
+        return parent[1];
+    }
+}
+
+private function consumeStreams(object) {
+    foreach(i,item in object) {
+        if(System.typeOf(item)==LIST || System.typeOf(item)==OBJECT) {
+            consumeStreams(item);
+        } else if(item && String.startsWith(item, "[Stream:")){
+            object[i] = Stream.getText(item);
+        }
+    }
+}

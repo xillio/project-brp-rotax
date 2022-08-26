@@ -1,0 +1,42 @@
+use Mongo, System, String, Assert, Properties;
+
+function tryMongoInsert(document, overwrite, identity)
+{
+    do
+    {
+        Mongo.insertOne("documents", document, identity) ;
+    }
+    fail(error)
+    {
+        if(!String.contains(error.message, "E11000 duplicate key error"))
+        {
+            Assert.error(error.message) ;
+        }
+        
+        if(overwrite)
+        {
+            Mongo.removeOne("documents", {"_id": document._id}, identity) ;
+            Mongo.insertOne("documents", document, identity) ;
+        }
+        else
+        {
+            System.print(error.message) ;
+        }
+    }    
+}
+
+function connect()
+{
+    var db = Properties.get("udm.database");
+    var host = Properties.get("udm.host");
+    var port = Properties.get("udm.port");
+    return Mongo.connect(Properties.get("udm.database"), Properties.get("udm.host"), Properties.get("udm.port")) ;
+}
+
+function ensureIndices()
+{
+    Mongo.createIndex("documents", {"source.current.parent.id": 1}) ;
+    Mongo.createIndex("documents", {"contentType": 1}) ;
+    Mongo.createIndex("documents", {"source.current.sp.id": 1}) ;
+    // Mongo.createIndex("documents", {"FSObjType": 1}) ;
+}

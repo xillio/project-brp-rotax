@@ -1,0 +1,237 @@
+use System, Date, String, Collection, Mongo, Assert, Properties, File;
+
+//-------------------------------------------------------------------------
+//						  FUNCTIONS
+//-------------------------------------------------------------------------
+
+function mapObject(document, node, parentId, parentPath, parentAncestors, depth) {
+    var kind;
+    
+    // Correct the parentId in case of a project this number is negative
+    // parentId = fixid(parentId);
+    
+    // Duplicate collection to remove reference to object
+    var ancestors = Collection.duplicate(parentAncestors);
+
+    document = mapDefault(document, node, parentId, parentPath, ancestors, depth);
+    
+    // Add all node properties
+    document.properties = node;
+    
+    if( node.container == true || node.type == 141 /* Workspace */ ) {
+        document = mapFolder(document, node, parentPath);
+        kind = "Folder";
+    } 
+    else {
+        document = mapFile(document, node, parentPath); 
+        kind = "Document";
+    }
+    
+    return {
+        "_id": @document.fileSystem.id,
+        "kind": kind,
+        "original": document,
+        "modified": Collection.duplicate(document)
+    };
+}
+
+private function created(date, systemName) { return created(date, systemName, null); }
+private function created(date, systemName, displayName) {
+    return {
+        "date" : formatDate(date),
+        "by": {
+            "systemName": systemName,
+            "displayName": displayName,
+            "email": ""
+        }
+        
+    };
+}
+private function formatDate(date) {
+    return Date.parse(String.replace(date,"\\..*",""), "yyyy-MM-dd'T'HH:mm:ss"); //2015-11-30T08:22:09.000-08:00;
+}
+
+// Return value not equal to NULL
+private function getFirstNotNullValue(values) {
+    foreach(v in values) {
+        if( v ) { return v; }
+    }
+}
+
+private function mapDefault(document, node, parentId, parentPath, ancestors, depth) {
+    
+    
+    var createdBy = getFirstNotNullValue([node.wnd_createdby, node.create_user_id]);
+    var modifiedBy = getFirstNotNullValue([node.wnd_modifiedby, node.modify_user_id]);
+    var createdDate = getFirstNotNullValue([node.create_date, node.modify_date]);
+    var modifiedDate = getFirstNotNullValue([node.modify_date, node.create_date]);
+    
+    
+    var created = created(node.create_date, createdBy);
+    var modified = created(node.modify_date, modifiedBy);
+    
+    // If audits list is provided use first as lastaccessed date
+    if( document.audits ) {
+        foreach(audit in document.audits) {
+        
+            var lastaccessed = created(audit.date, audit.userId);
+        
+            document += {
+                "lastaccessed" : lastaccessed,
+            };
+            break;
+        }
+    }
+
+    var fileSystemPath = node.name;
+    if( parentPath ) {
+        fileSystemPath = parentPath :: "/" :: node.name;
+    } 
+    
+    document += {
+        "contentType": {
+            "systemName": node.type,
+            "displayName": node.type_name
+        },
+        "parent": {
+            "id": @parentId,
+            "path": parentPath,
+            "ancestors": ancestors
+        },
+        "created" : created,
+        "modified" : modified,
+        "name" : {
+            "systemName" : node.name,
+            "displayName" : node.name,
+            "normalized" : normalized(node.name),
+        },
+        "fileSystem" : {
+            "id" : node.id,
+            "path" : fileSystemPath,
+            "depth": depth
+        }
+    };
+    
+    return document;
+}
+
+private function mapFolder(folder, node, parentPath) {
+    
+    folder += {
+        "container" : {
+            "hasChildren" : true
+        }
+    };
+    
+    folder.parent.ancestors[] = {"id": @node.id};
+        
+    return folder;
+}
+
+private function mapFile(document, node, parentPath) {
+
+    var extension = getExtension(node.name);
+    var mimeType = node.mime_type;
+    
+    // Get extension by looking at node type
+    if( !extension ) {
+        extension = getExtensionByType(node.type);
+    }
+    
+    // Get mimeType by looking at extension
+    if( !mimeType && extension ) {
+        mimeType = File.getMimeType(extension);
+        
+        if( !mimeType && extension == 'msg' ) { mimeType = 'application/x-outlook-msg'; }
+    }
+    
+    // Get mimeType by looking at node type
+    if( !mimeType ) {
+        mimeType = getMimeTypeByType(node.type);
+    }
+    
+    // Create a version of the current node
+    var version = createVersionModel(node.id, node.name, node.size, mimeType, extension, document.created.by.systemName, document.created.date, document.modified.date, node.description);
+    
+    document += {
+        "file": {
+            "extension": extension,
+            "rawExtension": extension,
+            "size": node.size
+        },
+        "mimeType": {
+            "type": mimeType
+        },
+        "versions": [version]
+    };
+    
+    return document;
+}
+
+
+private function createVersionModel(id, name, size, mimeType, extension, userId, createdDate, modifiedDate, description) {
+    var version = {
+        "id" : id,
+        "number" : 1,
+        "name" : name,
+        "size" : size,
+        "mimeType" : mimeType,
+        "userId" : userId,
+        "createdDate" : createdDate,
+        "modifiedDate" : modifiedDate,
+        "description" : description,
+        "extension" : extension
+    };
+    
+    return version;
+}
+
+private function getExtension(name) {
+    var lastIndex = String.lastIndexOf(name, ".");
+    
+    if( lastIndex > -1 ) {
+    
+        var extension = String.substring(name, lastIndex+1, String.length(name));
+    
+        return extension;
+    }
+}
+
+private function normalized(string) {
+    return String.toLower(String.trim(string, true));
+}
+
+private function getExtensionByType(type) {
+    var typeExtensions = getTypes();
+    
+    if( typeExtensions[type] ) {
+       return typeExtensions[type].extension;
+    }
+}
+private function getMimeTypeByType(type) {
+    var typeExtensions = getTypes();
+    
+    if( typeExtensions[type] ) {
+       return typeExtensions[type].mimeType;
+    }
+}
+private function getTypes() {
+    return {
+        749: {
+            "extension": "msg",
+            "mimeType": "application/x-outlook-msg"
+        }
+    };
+}
+
+
+private function fixid(id) {
+    var int = id+0;
+    
+    if( int < 0 ) {
+        return int*-1;
+    }
+    
+    return int;
+}
+

@@ -1,0 +1,25 @@
+/**
+ * Project: demo_drupal_aem
+ * Author: Titus Nachbauer
+ * Date: 2016-06-29
+ *
+ * HashUtil.xill is a library of often used functions related to hashing and checksums.
+ * It is recommended to include it through your project's Commons library.
+ */
+
+use Hash;
+
+//-------------------------------------------------------------------------
+//						  FUNCTIONS
+//-------------------------------------------------------------------------
+
+/**
+* Generates an md5 checksum based on the strings in list
+*/
+function generateChecksumFromList (list) {
+    var text = "";
+    foreach (element in list) {
+        text = text + element;
+    }
+    return Hash.toMD5(text);
+}

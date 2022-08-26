@@ -1,0 +1,1588 @@
+/*
+Project:       OpenText Connector		
+Author:        Tatiana Mamaliga
+Editor:        Gijs Maas	
+Modified:      2021-03-12
+
+Description:
+OpenText Connector Layer 1 - API
+
+This robot contains a set of OpenText-specific API calls.
+
+https://developer.opentext.com/webaccess/#url=%2Fawd%2Fresources%2Fapis%2Fcs-rest-api-for-cs-16-2%23!%2Fnodes%2FcreateNode_post_19&tab=501
+https://developer.opentext.com/webaccess/#url=%2Fawd%2Fresources%2Farticles%2F6102%2Fcontent%2Bserver%2Brest%2Bapi%2B%2Bquick%2Bstart%2Bguide
+*/
+
+use Assert, Collection, Encode, String, System, XURL, Date, Math, Properties;
+
+
+//-------------------------------------------------------------------------
+//						  SETUP
+//-------------------------------------------------------------------------
+
+var activeTickets = {};
+
+
+var server = {
+	"apiUrl": "",
+	"credentials": {
+		"username": "",
+		"password": ""
+	}
+};
+
+
+//-------------------------------------------------------------------------
+//						  TEST
+//-------------------------------------------------------------------------
+
+
+
+//-------------------------------------------------------------------------
+//						  ASTRAL
+//-------------------------------------------------------------------------
+
+function getProperties(server, nodeId) {
+
+    server.apiUrl2 = Properties.get("connector.opentext.export.host") :: "/cs.exe/api/v2/";
+
+    // var response = get(server, "businessworkspaces/" :: nodeId :: "");
+    var response = getV2(server, "nodes/":: nodeId :: "/properties" );
+			
+	if( response.body && response.body.results && response.body.results.data && response.body.results.data.properties ) {
+	    return response.body.results.data.properties;
+	}												
+	
+	return {};
+} 
+
+function updatePermissions (server, url, body) {
+    server.apiUrl2 = Properties.get("connector.opentext.export.host") :: "/cs.exe/api/v2/";
+    return curlput(server, server.apiUrl2 :: url, body, {});
+}
+
+function addCustomPermissions (server, url, body) {
+    server.apiUrl2 = Properties.get("connector.opentext.export.host") :: "/cs.exe/api/v2/";
+    return curlpost(server, server.apiUrl2 :: url, body, {});
+}
+
+
+function getNodePermissions(server, nodeId) {
+
+    server.apiUrl2 = Properties.get("connector.opentext.export.host") :: "/cs.exe/api/v2/";
+
+    // var response = get(server, "businessworkspaces/" :: nodeId :: "");
+    var response = getV2(server, "nodes/":: nodeId :: "/permissions");
+																   
+    return response.body.results;
+    // return getNodeByData (response.body.data, 0);
+} 
+function getEffectivePermissions(server, nodeId, rightId) {
+
+    server.apiUrl2 = Properties.get("connector.opentext.export.host") :: "/cs.exe/api/v2/";
+
+    // var response = get(server, "businessworkspaces/" :: nodeId :: "");
+    var response = getV2(server, "nodes/":: nodeId :: "/permissions/effective/" :: rightId);
+																   
+    return response.body.results;
+    // return getNodeByData (response.body.data, 0);
+} 
+
+function getBusinessworkspaces(server) {
+
+    server.apiUrl2 = Properties.get("connector.opentext.export.host") :: "/cs.exe/api/v2/";
+
+    // var response = get(server, "businessworkspaces/" :: nodeId :: "");
+    var response = getV2(server, "businessworkspaces");
+																   
+    return response.body.results;
+    // return getNodeByData (response.body.data, 0);
+} 
+
+function createWorkspace(server, body) {
+    server.apiUrl2 = Properties.get("connector.opentext.export.host");
+    // http://cs.example.com/OTCS/llisapi.dll/api/v2/businessworkspaces
+    // var url = "/llisapi.dll/api/v2/businessworkspaces";
+    // var url = "/cs.exe/api/v2/businessworkspaces";
+    
+    
+    var response = curlpost(server, server.apiUrl2 :: "/cs.exe/api/v2/businessworkspaces", body, {});
+    
+    return response.body.results;
+}
+
+
+function getBusinessworkspaceTypes(server, id) {
+    
+    // server.apiUrl2 = Properties.get("connector.opentext.export.host") :: "/llisapi.dll/api/v1/";
+    server.apiUrl2 = Properties.get("connector.opentext.export.host") :: "/cs.exe/api/v1/";
+    // http://cs.example.com/OTCS/llisapi.dll/api/v1/nodes/59372/businessworkspacetypes
+    
+    var response = getV2(server, "nodes/"::id::"/businessworkspacetypes");
+																   
+    return response.body;
+    // return getNodeByData (response.body.data, 0);
+} 
+
+function getWorkspaceTemplateDetails(server, body) {
+    server.apiUrl2 = Properties.get("connector.opentext.export.host") :: "/llisapi.dll/api/v2/forms/businessworkspaces/create";
+    // server.apiUrl2 = Properties.get("connector.opentext.export.host") :: "/cs.exe/api/v2/forms/businessworkspaces/create";
+    var url;
+    if (body.wkspTypeId) {
+        url = "?parent_id="::body.parentId::"&type=848&wksp_type_id="::body.wkspTypeId::"&template_id="::body.templateId;
+    } else {
+        url = "?parent_id="::body.parentId::"&type=848&wksp_type_id=1&template_id="::body.templateId;
+    }
+    // http://cs.example.com/OTCS/llisapi.dll/api/v2/forms/businessworkspaces/create?parent_id=59372&type=848&wksp_type_id=1&template_id=30143
+    var response = getV2(server, url);
+    
+    return response.body.forms[1];
+}
+
+function getXrefs(server) {
+    var response = get(server, "xrefs" );
+																   
+    return response.body.data;
+    // return getNodeByData (response.body.data, 0);
+} 
+
+function getNodeXrefs(server, nodeId) {
+    var response = get(server, "nodes/":: nodeId :: "/xrefs" );
+																   
+    return response.body.data;
+    // return getNodeByData (response.body.data, 0);
+} 
+
+
+function createXref(server, nodeId, refNodeId, refType, comment) {
+
+    return curlpost(server, server.apiUrl :: "nodes/" :: nodeId :: "/xrefs", {"xref_type": refType, "xref_id": refNodeId, "comment": comment}, {});
+
+}
+function createXref(server, nodeId, refNodeId, refType) {
+    return createXref(server, nodeId, refNodeId, refType, "");
+}
+
+//-------------------------------------------------------------------------
+//						  FUNCTIONS
+//-------------------------------------------------------------------------
+
+
+function getServer(host, user, pass) {
+	return {
+	    "apiUrl": host::"/cs.exe/api/v1/",
+    	"credentials": {
+    		"username": user,
+    		"password": pass
+        }
+    };
+}
+
+// API Functions {
+/**
+* Gets the information on a node based on its id.
+*/
+function getNode(server, nodeId) {
+    var response = get(server, "nodes/" :: nodeId :: "");
+																   
+    return response.body.data;
+    // return getNodeByData (response.body.data, 0);
+} 
+
+
+
+
+// API Functions {
+/**
+* Gets the data information on a node based on its id.
+*/
+function getNodeData(server, nodeId) {
+    var response = get(server, "nodes/" :: nodeId :: "?fields=data");
+																   
+    return response.body.data;
+    // return getNodeByData (response.body.data, 0);
+} 
+
+function getNodeAncestors(server, nodeId) {
+    var response = get(server, "nodes/" :: nodeId :: "/ancestors");
+																   
+    return response.body.ancestors;
+    // return getNodeByData (response.body.data, 0);
+} 
+
+// API Functions {
+/**
+* Gets the role information on a node based on its id.
+*/
+function getNodeRoles(server, nodeId) {
+    var response = get(server, "nodes/" :: nodeId :: "?fields=available_roles");
+																   
+    return response.body.available_roles;
+    // return getNodeByData (response.body.data, 0);
+} 
+
+/**
+* Gets available actions on the node.
+*/
+function getNodeActions(server, nodeId) {
+    var response = get(server, "nodes/" :: nodeId :: "/actions");
+																   
+    return getNodeByData(response.body.data, 0);
+} 
+
+/* Gets the information on a node based on its id.
+*/
+function getNodeInfoXML(server, nodeId) {
+    var response = get(server, "?func=ll&objId=" :: nodeId :: "&objAction=XMLexport&nodeInfo");
+    return response.body;
+} 
+			  
+/**
+												 
+  
+										 
+																							   
+						 
+  
+
+   
+* Gets the information on the children of a node from a given page 
+* based on the node id.
+*/
+function getNodeChildren (server, nodeId, page) { return getNodeChildren(server, nodeId, page, null); }
+function getNodeChildren (server, nodeId, page, parameters) {
+    var urlParameters = [];
+    
+    if(!Math.isNumber(page) || page <= 0) {
+        page = null;
+    }
+    
+    var url = "nodes/" :: nodeId :: "/nodes";
+    
+    if(page != null) {
+        urlParameters[] = "page=" :: page;
+    }
+    
+    if( parameters != null ) {
+        urlParameters[] = parameters;
+    }
+    
+    if( Collection.length(urlParameters) ) {
+        url ::= "?" :: String.join(urlParameters, "&");
+    }
+    
+    var response = get(server, url);
+    
+    
+    var nodes = [];
+    foreach(node in response.body.data) {
+        nodes[] = node;
+        // nodes[] = getNodeByData(node, 0);
+    }
+    
+    var result = {
+        "data": nodes
+    };
+    
+    if(response.body.page < response.body.page_total) {
+        result.next = response.body.page + 1;
+    }
+    
+    return result;
+}
+
+/**
+* Creates a node. At least the type, the parent id and the name
+* have to be provided.
+* Checks if the node already exists when the node fails to be created. 
+*/
+function createNode(server, name, description, type, parentId, path, mimeType) {
+    
+    var ticket = getTicket(server);
+    
+    Assert.notNull(type);
+    Assert.notNull(parentId);
+    Assert.notNull(name);
+    
+    var body = {
+        "type": textPlain(type),
+        "parent_id": textPlain(parentId),
+        "name": textPlain(name),
+        "description" : textPlain(description)
+    };
+    
+    if (path != null) {
+        Assert.notNull(mimeType, "You must specify a mimeType when uploading a file");
+        body.file = {
+            "content": path,
+            "type": "file",
+            "contentType": mimeType
+        }; 
+    }
+    
+    do {
+        var response = multipartPost(server, "nodes", body);
+        return response.body.id;
+    }
+    
+    // If the above block fails the node is probably already there
+    return findNode(server, parentId, name);
+}
+
+function createURL(server, name, description, type, parentId, path, mimeType, url) {
+     var ticket = getTicket(server);
+    
+    Assert.notNull(type);
+    Assert.notNull(parentId);
+    Assert.notNull(name);
+    
+    var body = {
+        "type": textPlain(type),
+        "parent_id": textPlain(parentId),
+        "name": textPlain(name),
+        "description" : textPlain(description),
+        "URL": textPlain(url)
+    };
+    
+    // if (path != null) {
+    //     Assert.notNull(mimeType, "You must specify a mimeType when uploading a file");
+    //     body.file = {
+    //         "content": path,
+    //         "type": "file",
+    //         "contentType": mimeType
+    //     }; 
+    // }
+    
+    do {
+        var response = multipartPost(server, "nodes", body);
+        return response.body.id;
+    }
+    
+    // If the above block fails the node is probably already there
+    return findNode(server, parentId, name);
+}
+
+/**
+* Creates a node. At least the type, the parent id and the name
+* have to be provided.
+* Checks if the node already exists when the node fails to be created. 
+*/
+function createShortcut(server, name, description, originalId, parentId) {
+    var type = 1; // Shortcut type
+    var ticket = getTicket(server);
+    
+    Assert.notNull(type);
+    Assert.notNull(parentId);
+    Assert.notNull(name);
+    
+    var body = {
+        "type": textPlain(type),
+        "parent_id": textPlain(parentId),
+        "original_id": textPlain(originalId),
+        "name": textPlain(name),
+        "description" : textPlain(description)
+    };
+    
+    do {
+        var response = multipartPost(server, "nodes", body);
+        return response.body.id;
+    }
+    
+    // If the above block fails the node is probably already there
+    return findNode(server, parentId, name);
+}
+
+/**
+* Updates the node name and/or description.
+* Returns false if the update has not succeeded.
+*/
+function updateNode (server, nodeId, name, description) {
+    Assert.notNull(nodeId);
+    
+    var parameters = {};
+    if (name != null) {
+        parameters ["name"] = name;
+    }
+    if (description != null) {
+        parameters ["description"] = description;
+    }
+
+    do {
+        put(server, "nodes/" :: nodeId, parameters);
+        return true;
+    }
+    
+    return false;
+}
+ 
+/**
+* move a node to a different parent
+*/
+function moveNode(server, nodeId, parentId){
+    Assert.notNull(nodeId);
+    Assert.notNull(parentId);
+    var parameters= {
+        "parent_id" : parentId
+    };
+    var response = put(server, "nodes/" :: nodeId, parameters);
+    return response;
+}
+	
+
+/**
+* Deletes a node.
+* Returns false if the delete has not succeeded.
+*/
+function deleteNode(server, nodeId) {
+    do {
+        delete(server, "nodes/" :: nodeId);
+        return true;
+    }
+    return false;
+}
+
+/**
+* Downloads the content of a node.
+*/
+function getNodeContent(server, nodeId) {
+    var response = get(server, "nodes/" :: nodeId :: "/content?action=download");
+    return response.body;
+}
+
+/**
+* Gets the audit information of a node.
+*/
+function getNodeAudit(server, nodeId) {
+    
+    var url = "nodes/" :: nodeId :: "/audit?limit=10";
+    var response = get(server, url);
+    
+    var result = {
+        "data": collect(map<getAuditByData>(response.body.data))
+    };
+    
+    if(response.body.page < response.body.page_total) {
+        result.next = response.body.page + 1;
+    }
+    
+    return result.data;
+}
+
+/**
+* Downloads the content of the specified version of a node.
+*/
+function getVersionContent(server, nodeId, versionNumber) {
+    var response = get(server, "nodes/" :: nodeId :: "/versions/" :: versionNumber :: "/content?action=download");
+    return response.body;
+}
+
+/** 
+* Gets info on the latest version on the node.
+*/
+function getVersionsLatest(server, nodeId) {
+    var response = get(server, "nodes/" :: nodeId :: "/versions/latest");
+    return getVersionByData(response.body.data);
+}
+
+/** 
+* Gets information regarding the versions of a node.
+*/
+function getVersions (server, nodeId) {
+    var response = get(server, "nodes/" :: nodeId :: "/versions");
+    return collect(map<getVersionByData>(response.body.data));
+}
+
+/**
+* Adds a new version on the node.
+* Returns -1 if the version fails to be added.
+*/
+function addNodeVersion (server, nodeId, path, mimeType) {
+
+    Assert.notNull(path);
+    Assert.notNull(mimeType);
+    
+    var ticket = getTicket (server);
+    var body = {
+        "id": textPlain(nodeId),
+        "file": {
+            "content": path,
+            "type": "file",
+            "contentType": mimeType
+        }
+    };
+    
+    do {
+        var response = multipartPost(server, "nodes/" :: nodeId :: "/versions", body);
+        return response.body.id;
+    }
+    return -1;
+}
+
+/**
+* Updates the description of the specified version of a node.
+* Returs false if the update has not succeeded.
+*/
+function updateNodeVersion (server, nodeId, versionNumber, description) {
+    var parameters = {};
+    
+    Assert.notNull(nodeId);
+    
+    if (description != null) {
+        parameters["description"] = description;
+    }
+    
+    do {
+        put(server, "nodes/" :: nodeId :: "/versions/" :: versionNumber, parameters);
+        return true;
+    }
+    return false;
+}
+
+/**
+* Deletes the specified version of a node.
+* Returns false if the version failed to be deleted.
+*/
+function deleteNodeVersion (server, nodeId, versionNumber) {
+    do {
+        delete(server, "nodes/" :: nodeId :: "/versions/" :: versionNumber);
+        return true;
+    }
+    
+    return false;
+}
+
+/**
+* Gets category and attribute information from a given category
+* attached to a node.
+*/
+function getNodeCategory (server, nodeId, categoryId) {
+    
+    var response = get(server, "nodes/" :: nodeId :: "/categories/" :: categoryId);
+    
+    var category = {};
+    
+   var attributes = response.body.definitions;
+    foreach (attribute in attributes){
+        // exclude the definition of the category itself, consider only the attributes
+        if (attribute.key != categoryId) {
+            category[attribute.name] = {
+                "id": attribute.key,
+                "type": attribute.type_name,
+                "value": getNodeCategoryData(response.body.data, attribute.key),
+                "required": attribute.required
+            };
+        }
+    }
+
+    return category;
+}
+
+private function getNodeCategoryData(data, key) {
+    var regexKey = String.replace(key, "x", "[0-9]+", false);
+    
+    foreach(k, v in data) {
+        if( String.matches(k, regexKey) == true ) {
+            return v;
+        }
+    }
+}
+
+/**
+* Gets a list of categories attached to a node.
+*/
+function getNodeCategories (server, nodeId) {
+    var categories = {};
+    
+    var response = get(server, "nodes/" :: nodeId :: "/categories/");
+    
+    foreach (category in response.body.data) {
+        categories[category.id] = category.name;
+    }
+    
+    return categories;
+}
+
+/**
+* Attaches a category to a node.
+* Returns false if the category fails to be attached to the node.
+* The function does not fill in the attribute values.
+*/
+function addNodeCategory (server, nodeId, categoryId) {
+    var body = {
+        "id": textPlain(nodeId),
+        "category_id": textPlain(categoryId)
+    };
+    
+    do {
+        var response = multipartPost(server, "nodes/" :: nodeId :: "/categories", body);
+        return true;
+    }
+    return false;
+}
+
+/**
+* Attaches a category and provided attributes to a node.
+* Returns false if the category or its attributes fails to be attached to the node.
+* The attributes have a key with the following format: categoryId_attributeId, e.g.: 6184_2
+* You can retrieve the attribute key by obtaining the attribute definitions:
+*   var response = get(server, "nodes/" :: nodeId :: "/categories/" :: categoryId);
+*   var attributes = response.body.definitions;
+*/
+function addNodeCategory (server, nodeId, categoryId, attributes) {
+    var body = {
+        "id": textPlain(nodeId),
+        "category_id": textPlain(categoryId)
+    };
+    
+    foreach (aKey, aValue in attributes) {
+        body[aKey] = textPlain(aValue);
+    }
+    
+    do {
+        var response = multipartPost(server, "nodes/" :: nodeId :: "/categories", body);
+        return true;
+    }
+    return false;
+}
+
+/**
+* Inserts/updates attribute values on the specified category of a node.
+* Returns false if the insert/update has not succeeded.  
+*/
+function updateNodeCategory (server, nodeId, categoryId, category) {
+    var parameters = {};
+    server.apiUrl2 = Properties.get("connector.opentext.export.host") :: "/cs.exe/api/v2/";
+    var response = get(server, "nodes/" :: nodeId :: "/categories/" :: categoryId);
+    var attributes = response.body.definitions;
+    
+    foreach (attribute in attributes) {
+        // exclude the definition of the category itself, consider only the attributes
+        // AND update only those attributes that are explicitly provided through the category parameter 
+        if (attribute.key != categoryId && category[attribute.name] != null){
+            parameters[attribute.key] = category[attribute.name];
+        }
+    }
+
+    do {
+        // put(server, "nodes/" :: nodeId :: "/categories/" :: categoryId, parameters);
+        var url = server.apiUrl::"/nodes/" :: nodeId :: "/categories/" :: categoryId;
+        curlput(server, url , parameters, {});
+        // putTestWithBody(server, "nodes/" :: nodeId :: "/categories/" :: categoryId, parameters);
+        // var responseCat = multipartPost2(server, "nodes/" :: nodeId :: "/categories/" :: categoryId, parameters);
+        return true;
+    } fail (e) {
+        System.print(e);
+    }
+    return false;
+}
+
+// function updateNodeCategoryWithBody(server, nodeId, categoryId, category) {
+//     var parameters = {};
+//     server.apiUrl2 = Properties.get("connector.opentext.export.host") :: "/cs.exe/api/v2/";
+//     var response = get(server, "nodes/" :: nodeId :: "/categories/" :: categoryId);
+//     var attributes = response.body.definitions;
+    
+//     foreach (attribute in attributes) {
+//         // exclude the definition of the category itself, consider only the attributes
+//         // AND update only those attributes that are explicitly provided through the category parameter 
+//         if (attribute.key != categoryId && category[attribute.key] != null){
+//             parameters[attribute.key] = category[attribute.key];
+//         }
+//     }
+
+//     do {
+//         // put(server, "nodes/" :: nodeId :: "/categories/" :: categoryId, parameters);
+//         var url = server.apiUrl::"/nodes/" :: nodeId :: "/categories/" :: categoryId;
+//         curlput(server, url , parameters, {});
+//         // putTestWithBody(server, "nodes/" :: nodeId :: "/categories/" :: categoryId, parameters);
+//         // var responseCat = multipartPost2(server, "nodes/" :: nodeId :: "/categories/" :: categoryId, parameters);
+//         return true;
+//     } fail (e) {
+//         System.print(e);
+//     }
+//     return false;
+// }
+
+function updateBWSCategory(server, nodeId, categoryId, body) {
+    server.apiUrl2 = Properties.get("connector.opentext.export.host") :: "/cs.exe/api/v2/";
+    return curlpost(server, server.apiUrl2::"nodes/" :: nodeId :: "/categories/" :: categoryId, body, {});
+}
+
+/**
+* Searches for a member based on its type (user or group) and a given 
+* query to filter the results even further.
+*/
+function queryMembers (server, query, type){
+    var url = "members?where_type=":: type :: "&query=":: query;
+    var response = get(server, url);
+    return collect(map<getMemberByData>(response.body.data));
+}
+
+/**
+* Gets the members.
+*/
+function getAllMembers (server) {
+    var response = get(server, "members");
+    return collect(map<getMemberByData>(response.body.data));
+}
+
+/**
+* Gets information on a member (user or group).
+*/
+function getMember(server, memberId) {
+    var response = get(server, "members/" :: memberId);
+    return getMemberByData(response.body.data);
+}
+
+/**
+* Creates an user or a group.
+* At least the type and the name of the member have to be specified.
+* It is mandatory to provide the group id when a user is created.
+* Checks if the member already exists when the member fails to be created. 
+*/
+function addMember (server, type, name, groupId) {
+    Assert.notNull(type);
+    Assert.notNull(name);
+    
+    var ticket = getTicket (server);
+    var body = {
+        "type": textPlain(type),
+        "name": textPlain(name)
+    };
+    
+    if (type == 0) {
+        Assert.notNull(groupId);
+        body.group_id = textPlain(groupId);
+    }
+    
+    do {
+        var response = multipartPost(server, "members", body);
+        return response.body.id;
+    }
+    
+    return findMember (server, name, type);
+}
+
+/**
+* Searches for a member and returns its id if the member was found.
+*/
+function findMember(server, name, type){
+    var members = queryMembers (server, name, type);
+    foreach (member in members) {
+        if (member.name == name) {
+            return (member.id);
+        }
+    }
+    return -1;
+}
+
+/**
+* Updates the information of a member.
+* Returns false if the update has not succeeded.
+*/
+function updateMember (server, memberId, member) {
+    var parameters = getMemberParameters(member);
+
+    do {
+        var response = put(server, "members/" :: memberId, parameters); 
+        return true;
+    }
+    
+    return false;
+}
+
+/**
+* Deletes a member.
+* Returns false if the deletion has not succeeded.
+*/
+function deleteMember (server, memberId) {
+    do {
+        var response = delete(server, "members/" :: memberId);
+        return true;
+    }
+    
+    return false;
+}
+// }
+
+// Private Functions {
+
+/** 
+* Gets an active ticket. 
+* When there are no active tickets, a new ticket is generated.
+*/
+private function getTicket(server) {
+    var cache = activeTickets[server.apiUrl];
+    if(cache == null || cache.expires <= timestamp(0)) {
+        cache = generateTicket(server);
+        activeTickets[server.apiUrl] = cache;
+    }
+    
+    return cache.ticket;
+}
+
+/**
+* Generates a new ticket.
+*/
+private function generateTicket(server) {
+    System.print("Getting authentication ticket for " :: server.apiUrl, "debug");
+    var ticket = "";
+    
+    var tries = 10;
+    while (tries > 0) {
+        tries = tries - 1;
+        var body = {
+            "username" : {
+                "content": server.credentials.username,
+                "type": "text",
+                "contentType": "text/plain"
+            },
+            "password": {
+                 "content": server.credentials.password,
+                 "type" : "text",
+                 "contentType": "text/plain"
+            } 
+        };
+        var response = XURL.post(
+            server.apiUrl:: "auth",
+            body,
+            {
+                "headers": {
+                    "OTCSTICKET" : ticket
+                },
+                "multipart": true
+            }
+        );
+        if (response.status.code == 200) {
+            ticket = response.body.ticket;
+            tries = -1;
+            break;
+        }
+    }
+    
+    return {
+        "ticket": ticket,
+        "expires": timestamp(10)
+    };
+}
+
+/**
+* Gets the seconds of the date that is calculated after a number 
+* of minutes from now.  
+*/
+private function timestamp(minFuture) {
+    var date = Date.change(Date.now(), {"minutes": minFuture});
+    var info = Date.info(date);
+    var result = info.instantSeconds;
+    
+    // Workaround for old versions of xill
+    if(result == null) {
+        return info.InstantSeconds;
+    }
+    
+    return result;
+}
+
+/**
+* Performs a multipart post request on an OpenText Content server.
+* Throws an error if the post request is not successful.
+*/
+private function multipartPost(server, url, body) {
+    var options = {
+        "headers": {
+            "OTCSTICKET" : getTicket(server)
+        },
+        "multipart": true
+    };
+    var requestUrl = server.apiUrl :: url;
+    var result = XURL.post(requestUrl, body, options);
+    // System.print(result.body);
+				
+					  
+	 
+    Assert.equal(
+        result.status.code, 
+        200, 
+        "Call to POST:" :: requestUrl :: " resulted in " :: result.status.code :: ": " :: result.status.phrase
+    );
+    
+    return result;
+}
+private function multipartPost2(server, url, body) {
+    var options = {
+        "headers": {
+            "OTCSTICKET" : getTicket(server)
+        },
+        "multipart": true
+    };
+    var requestUrl = server.apiUrl2 :: url;
+    var result = XURL.post(requestUrl, body, options);
+    // System.print(result.body);
+				
+					  
+	 
+    Assert.equal(
+        result.status.code, 
+        200, 
+        "Call to POST:" :: requestUrl :: " resulted in " :: result.status.code :: ": " :: result.status.phrase
+    );
+    
+    return result;
+}
+private function multipartPut(server, url, body) {
+    var options = {
+        "headers": {
+            "OTCSTICKET" : getTicket(server)
+        },
+        "multipart": true
+    };
+    var requestUrl = server.apiUrl :: url;
+    var result = XURL.put(requestUrl, body, options);
+    // System.print(result.body);
+				
+					  
+	 
+    Assert.equal(
+        result.status.code, 
+        200, 
+        "Call to POST:" :: requestUrl :: " resulted in " :: result.status.code :: ": " :: result.status.phrase
+    );
+    
+    return result;
+}
+
+/**
+* Performs a get request on an OpenText Content Server.
+* Throws an error if the get request is not successful.
+*/
+private function get(server, url) {
+    var options = {
+        "headers": {
+            "OTCSTICKET" : getTicket(server)
+        }
+    };
+    var requestUrl = server.apiUrl :: url;
+    var result = XURL.get(requestUrl, options);
+    
+				
+					  
+		 
+    // Assert.equal(
+    //     result.status.code, 
+    //     200, 
+    //     "Call to GET:" :: requestUrl :: " resulted in " :: result.status.code :: ": " :: result.status.phrase
+    // );
+    
+    return handleResponse(requestUrl, result);
+}
+private function getV2(server, url) {
+    var options = {
+        "headers": {
+            "OTCSTICKET" : getTicket(server)
+        }
+    };
+    var requestUrl = server.apiUrl2 :: url;
+    var result = XURL.get(requestUrl, options);
+    
+				
+					  
+		 
+    // Assert.equal(
+    //     result.status.code, 
+    //     200, 
+    //     "Call to GET:" :: requestUrl :: " resulted in " :: result.status.code :: ": " :: result.status.phrase
+    // );
+    
+    return handleResponse(requestUrl, result);
+}
+
+/**
+* Performs a delete request on an OpenText Content Server.
+* Throws an error if the delete request is not successful.
+*/
+private function delete(server, url) {
+    var options = {
+        "headers": {
+            "OTCSTICKET" : getTicket(server)
+        }
+    };
+    var requestUrl = server.apiUrl :: url;
+    var result = XURL.delete(requestUrl, options);
+    
+				
+					  
+		 
+    Assert.equal(
+        result.status.code, 
+        200, 
+        "Call to DELETE:" :: requestUrl :: " resulted in " :: result.status.code :: ": " :: result.status.phrase
+    );
+    
+    return result;
+}
+
+/**
+* Performs a put request on an OpenText Content Server.
+* Throws an error if the put request is not successful.
+*/
+private function put(server, url, parameters) {
+    var options = {
+        "headers": {
+            "OTCSTICKET" : getTicket(server)
+        }
+    };
+    
+    var requestUrl = String.format("%s%s?%s", [server.apiUrl, url, parseParameters(parameters)]);
+    var result = XURL.put(requestUrl, "", options);
+    
+				
+					  
+	 
+    Assert.equal(
+        result.status.code, 
+        200, 
+        "Call to PUT:" :: requestUrl :: " resulted in " :: result.status.code :: ": " :: result.status.phrase
+    );
+    
+    return result;
+}
+// private function putTestWithBody(server, url, parameters) {
+//     var options = {
+//         "headers": {
+//             "OTCSTICKET" : getTicket(server)
+//         }
+//     };
+    
+//     // var requestUrl = String.format("%s%s?%s", [server.apiUrl, url, parseParameters(parameters)]);
+//     // var bodyString = "";
+//     // foreach (k, v in parameters) {
+//     //     bodyString = k::":"::v;
+//     // }
+//     var body = System.toJSON(parameters);
+    
+//     var requestUrl = server.apiUrl::url::"?body="::body;
+//     // var body = parameters;
+//     var result = XURL.put(requestUrl, "", options);
+    
+				
+					  
+	 
+//     Assert.equal(
+//         result.status.code, 
+//         200, 
+//         "Call to PUT:" :: requestUrl :: " resulted in " :: result.status.code :: ": " :: result.status.phrase
+//     );
+    
+//     return result;
+// }
+private function putV2(server, url, parameters) {
+    var options = {
+        "headers": {
+            "OTCSTICKET" : getTicket(server)
+        }
+    };
+    
+    server.apiUrl = Properties.get("connector.opentext.export.host") :: "/cs.exe/api/v2/";
+    
+    var requestUrl = String.format("%s%s?%s", [server.apiUrl, url, parseParameters(parameters)]);
+    var result = XURL.put(requestUrl, "", options);
+    
+				
+					  
+	 
+    Assert.equal(
+        result.status.code, 
+        200, 
+        "Call to PUT:" :: requestUrl :: " resulted in " :: result.status.code :: ": " :: result.status.phrase
+    );
+    
+    return result;
+}
+
+
+private function handleResponse(requestUrl, response) {
+    
+    if( !String.startsWith(response.status.code, 2) ) {
+        if( response.body && System.typeOf(response.body) == ATOMIC ) {
+            Assert.error(response.body);
+        }
+        else if( response.body && response.body.error ) {
+            Assert.error(response.body.error);
+        } else {
+            Assert.error("Call to POST:" :: requestUrl :: " resulted in " :: response.status.code :: ": " :: response.status.phrase);
+        }
+    }
+    
+    return response;
+}
+
+/**
+* Gets node details based on the data provided by a get request. 
+*/
+private function getNodeByData (data, source) {
+    var node = {};
+    
+    node.id = data.id;
+    node.parentId = data.parent_id;
+    node.type = data.type;
+    node.typeName = data.type_name;
+    node.name = data.name;
+    node.description = data.description;
+    node.reserved = data.reserved;
+    node.reservedDate = data.reserved_date;
+    node.reservedUserId = data.reserved_user_id;
+    node.volumeId = data.volume_id;
+    node.modifiedDate = data.modify_date;
+									
+	
+    if (source == 0) {
+        node.createdDate = data.create_date;
+        node.createdBy = data.create_user_id;
+        node.modifiedBy = data.modify_user_id;
+        
+        node.nameMultilingual = data.name_multilingual;
+        node.descriptionMultilingual = data.description_multilingual;
+    } else {
+        node.createdDate = data.wnd_createdate;
+        node.createdBy = data.wnd_createdby;
+        node.modifiedBy = data.wnd_modifiedby;
+    }
+ 
+    return (node);   
+}
+
+/**
+* Gets version details based on the version data provided by a get request. 
+*/
+private function getVersionByData (versionData) {
+    return {
+        "id": versionData.version_id,
+        "number": versionData.version_number,
+        "name": versionData.name,
+        "size": versionData.file_size,
+        "mimeType": versionData.mime_type,
+        "userId" : versionData.owner_id,
+        "createdDate": versionData.create_date,
+        "modifiedDate": versionData.modify_date,
+        "description": versionData.description,
+        "extension": versionData.file_type,
+        "locked": versionData.locked,
+        "lockedDate": versionData.locked_date,
+        "lockedUserId": versionData.locked_user_id,
+        "providerId": versionData.provider_id,
+        "numberMajor": versionData.version_number_major,
+        "numberMinor": versionData.version_number_minor,
+        "numberName": versionData.version_number_name,
+        "menu": versionData.menu,
+        "providerName": versionData.provider_name
+    }; 
+}
+
+/**
+* Gets event details based on the event data provided by a get request. 
+*/
+private function getAuditByData (event) {
+    return {
+        "nodeId": event.id,
+        "date": event.audit_date,
+        "name": event.audit_name,
+        "userId": event.user_id,
+        "languageCode": event.audit_language_code
+    }; 
+}
+
+/**
+* Gets member details based on the member data provided by a get request. 
+*/
+private function getMemberByData (memberData) {
+    var member = {};
+    
+    member.id = memberData.id;
+    member.type = memberData.type;
+    member.typeName = memberData.type_name;
+    member.name = memberData.name;
+    member.businessEmail = memberData.business_email;
+    member.businessFax = memberData.business_fax;
+    member.businessPhone = memberData.business_phone;
+    member.deleted = memberData.deleted;
+    member.firstName = memberData.first_name;
+    member.lastName = memberData.last_name;
+    member.middleName = memberData.middle_name;
+    member.officeLocation = memberData.office_location;
+    member.privilegeLogin = memberData.privilege_login;
+    member.privilegeModifyGroups = memberData.privilege_modify_groups;
+    member.privilegeModifyUsers = memberData.privilege_modify_users;
+    member.privilegePublicAccess = memberData.privilege_public_access;
+    member.privilegeSystemAdminRights = memberData.privilege_system_admin_rights;
+    member.privilegeUserAdminRights = memberData.privilege_user_admin_rights;
+    member.timeZone = memberData.time_zone;
+    member.title = memberData.title;
+    member.groupId = memberData.group_id;
+    
+    return member;
+}
+
+/**
+* Returns a body parameter value of type text plain. 
+*/
+private function textPlain(content) {
+    return {
+        "content": content,
+        "type": "text",
+        "contentType": "text/plain"
+    };
+}
+
+/**
+* Integrates a set of parameters in a REST API request.
+*/
+private function parseParameters (parameters) {
+    return String.join(collect(map<parseParameter>(parameters)), "&");
+}
+
+/**
+* Integrates a parameter in a REST API request. 
+*/
+private function parseParameter(parameter) {
+    foreach(key, value in parameter) {
+        if(value == null || value == "null") {
+            return key :: "=";
+        // handle fields with multiple values
+        } else if (System.typeOf(value) == "LIST") {
+            var valueList = [];
+            foreach (element in value) {
+                valueList[] = key :: "=" :: Encode.toPercent(element);
+            }
+            return String.join(valueList, "&");
+        } else {
+            return key :: "=" :: Encode.toPercent(value);
+        }
+    }
+}
+
+/**
+* Searches for a node and returns its id if the node was found.
+*/
+private function findNode(server, parentId, name) {
+    var nodes = getNodeChildren (server, parentId, 0);
+    foreach (node in nodes.data) {
+        if (node.name == name) {
+            return (node.id);
+        }
+    }
+    return -1;
+}
+
+/**
+* Gets the parameters to be used in a REST API request based on the
+* member information.
+*/
+private function getMemberParameters (member) {
+    var parameters = {};
+    
+    if (member.name != null) {
+        parameters["name"] = member.name;
+    }
+    if (member.groupId != null) {
+        parameters["group_id"] = member.groupId;
+    }
+    if (member.leaderId != null) {
+        parameters["leader_id"] = member.leaderId;
+    }
+    if (member.password != null) {
+        parameters["password"] = member.password;
+    }
+    if (member.firstName != null) {
+        parameters["first_name"] = member.firstName;
+    }
+    if (member.middleName != null) {
+        parameters["middle_name"] = member.middleName;
+    }
+    if (member.lastName != null) {
+        parameters["last_name"] = member.lastName;
+    }
+    if (member.title != null) {
+        parameters["title"] = member.title;
+    }
+    if (member.businessEmail != null) {
+        parameters["business_email"] = member.businessEmail;
+    }
+    if (member.businessPhone != null) {
+        parameters["business_phone"] = member.businessPhone;
+    }
+    if (member.businessFax != null) {
+        parameters["business_fax"] = member.businessFax;
+    }
+    if (member.officeLocation != null) {
+        parameters["office_location"] = member.officeLocation;
+    } 
+    if (member.timeZone != null) {
+        parameters["time_zone"] = member.timeZone;
+    }
+    if (member.privilegeLogin != null) {
+        parameters["privilege_login"] = member.privilegeLogin;
+    }
+    if (member.privilegePublicAccess != null) {
+        parameters["privilege_public_access"] = member.privilegePublicAccess;
+    }
+    if (member.privilegeModifyUsers != null) {
+        parameters["privilege_modify_users"] = member.privilegeModifyUsers;
+    }
+    if (member.privilegeModifyGroups != null) {
+        parameters["privilege_modify_groups"] = member.privilegeModifyGroups;
+    }
+    if (member.privilegeUserAdminRights != null) {
+        parameters["privilege_user_admin_rights"] = member.privilegeUserAdminRights;
+    }
+    if (member.privilegeSystemAdminRights != null) {
+        parameters["privilege_system_admin_rights"] = member.privilegeSystemAdminRights;
+    }
+    if (member.fields != null) {
+        parameters["fields"] = member.fields;
+    }
+    if (member.expand != null) {
+        parameters["expand"] = member.expand;
+    }
+    if (member.expandFields != null) {
+        parameters["expand_fields"] = member.expandFields;
+    }
+    
+    return parameters;
+}
+// }
+
+function errorCheck(response){
+    if (response.status.code == 400){
+        return badRequest(response.body);
+    }else if (response.status.code == 401){
+        return unauthorized(response.body);
+    // }else if (response.status.code == 402){
+        // return 
+    }else if (response.status.code == 403){
+        return forbidden(response.body);
+    }else if (response.status.code == 404){
+        return notFound(response.body);
+    }else if (response.status.code == 405){
+        return notFound(response.body);
+    }else if (response.status.code == 500){
+        return internalServer(response.body);
+    }else{
+        return false;
+    }
+    
+}
+
+private function badRequest(body){
+    return {
+        "message"  : body.message,
+        "error"     : "Bad Request",
+        "status"    : "400",
+        "timestamp" : Date.now(),
+        "errorType" : "Bad Request",
+        "parameters": {}
+    };
+}
+
+private function unauthorized(body){
+    return {
+        "message"  : body.message,
+        "error"     : "Bad Request",
+        "status"    : "401",
+        "timestamp" : Date.now(),
+        "errorType" : "Authentication Required",
+        "parameters": {}
+    };
+}
+
+private function notFound(body){
+    return {
+        "message"  : body.message,
+        "error"     : "Bad Request",
+        "status"    : "400",
+        "timestamp" : Date.now(),
+        "errorType" : "Bad Request",
+        "parameters": {}
+    };
+}
+
+private function forbidden(body){
+    return {
+        "message"  : "Access is denied",
+        "error"     : "forbiddent",
+        "status"    : "403",
+        "timestamp" : Date.now(),
+        "errorType" : "AccessDenied",
+        "parameters": {
+            "message"   : body.message
+        }
+    };
+}
+
+private function internalServer(body){
+    return {
+        "message"  : body.message,
+        "error"     : "Bad Request",
+        "status"    : "500",
+        "timestamp" : Date.now(),
+        "errorType" : "Bad Request",
+        "parameters": {}
+    };
+}
+
+/*
+ * https://appworksdeveloper.opentext.com/webaccess/#url=%2Fawd%2Fresources%2Fapis%2Frecords-management-v1%23!%2Fnodes%2FgetRMClassifications_get_1&tab=501
+ *
+ */
+function getRMCData(server, nodeId)
+{
+    var response = get(server, "nodes/" :: nodeId :: '/rmclassifications') ;
+    return response.body.data ;
+}
+
+ 
+
+function getCData(server, nodeId)
+{
+    var response = get(server, "nodes/" :: nodeId :: '/classifications') ;
+    return response.body.data ;
+}
+
+//-------------------------------------------------------------------------
+//						  PRIVATE FUNCTIONS
+//-------------------------------------------------------------------------
+
+
+function curlpost(server, url, json, options) {
+    return curlrequest(server, url, json, options, "POST");
+}
+function curlput(server, url, json, options) {
+    return curlrequest(server, url, json, options, "PUT");
+}
+
+private function curlrequest(server, url, json, options, requestType) {
+
+    if( !options.headers ) {
+        options.headers = {};
+    }
+
+    // Add contentType to header
+    options.headers["Content-Type"] = "application/x-www-form-urlencoded";
+    options.headers["OTCSTICKET"] = getTicket(server);
+
+    var requestUrl = url;
+    // var requestUrl = "http://httpbin.org/post";
+
+    var arguments = [
+        Properties.get("connector.curl.path"), 
+        '--location' , 
+        '--request' , 
+        requestType, 
+        requestUrl
+    ];
+    
+    if( options && options.headers ) {
+        foreach(key, header in options.headers) {
+            arguments[] = '--header';
+            arguments[] = key :: ':' :: header;
+        }
+    }
+    
+    arguments[] = '--data-urlencode';
+    arguments[] = 'body=' :: Encode.toPercent(System.toJSON(json, false));
+    
+    
+    // Execute curl
+    var response = System.exec(arguments);
+    
+    return parseCurlResponse(response);
+}
+
+private function curlrequestMultipart(server, url, json, options, requestType) {
+
+    if( !options.headers ) {
+        options.headers = {};
+    }
+
+    // Add contentType to header
+    options.headers["Content-Type"] = "multipart/form-data";
+    // options.headers["Content-Disposition"] = "form-data; name='body'";
+    options.headers["OTCSTICKET"] = getTicket(server);
+
+    var requestUrl = url;
+    // var requestUrl = "http://httpbin.org/post";
+
+    var arguments = [
+        Properties.get("connector.curl.path"),
+        "-g",
+        "--location",
+        "--request",
+        requestType,
+        requestUrl,
+        "--form",
+        "body='"::json::"'"
+    ];
+    
+    if( options && options.headers ) {
+        foreach(key, header in options.headers) {
+            arguments[] = '--header';
+            arguments[] = key :: ':' :: header;
+        }
+    }
+    
+    // arguments[] = '--form';
+    // arguments[] = '-d';
+    // arguments[] = 'body=' :: json;
+    // arguments[] = requestUrl;
+    
+    
+    // Execute curl
+    var response = System.exec(arguments);
+    
+    return parseCurlResponse(response);
+}
+
+private function handleResponse(response) {
+    // LET OP NIET VERWIJDEREN
+    if( response && response.status ) {
+        if( !response.status.code || (response.status.code && String.startsWith(response.status.code, "2") == false) ) {
+            Assert.error("Error");
+        }
+    }
+}
+
+private function parseCurlResponse(cRes) {
+    var responseCode = 200;
+    var output = cRes.output;
+    
+    if( output ) {
+        output = System.parseJSON(output);
+        
+        if( output.error ) {
+            responseCode = 500;
+        }
+    } else {
+        responseCode = 500;
+    }
+    
+    return {
+        "status": {"code": responseCode},
+        "body": output
+    };
+}
+private function getCurlResponseCode(response) {
+    var patterns = [".*HTTP\\/1\\.1 ([0-9]{3}).*", ".*ResponseCode: ([0-9]{3}).*"];
+    foreach(pattern in patterns) {
+        var matches = String.regex(response, pattern);
+        
+        if( matches ) { 
+            do {
+                return matches[1];
+            }
+        }
+    }
+
+}
+
+
+
+

@@ -1,0 +1,25 @@
+use System, String;
+
+
+function toUpdateObject(object) {
+    var update = {};
+    
+    update = recurseObject(update, [], object);
+    
+    return update;
+}
+
+private function recurseObject(update, keys, object) {
+    
+    foreach(key, value in object) {
+        
+        if( System.typeOf(value) == OBJECT ) {
+            update = recurseObject(update, keys + [key], value);
+        } else {
+            update += {String.join(keys + [key], "."): value};
+        }
+        
+    }
+    
+    return update;
+}

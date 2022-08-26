@@ -1,0 +1,77 @@
+use Collection, Mongo, MSSQL, Properties, System, String, Concurrency;
+
+include project.qE.commons.Helper as helper;
+include project.qE.extract.Extract as extract;
+
+
+//-------------------------------------------------------------------------
+//						  SETUP
+//-------------------------------------------------------------------------
+
+var items = collect(helper->getRequestsForProcessing());
+
+argument data = Concurrency.testInput({}, items);
+
+//-------------------------------------------------------------------------
+//						  MAIN
+//-------------------------------------------------------------------------
+
+// Set item
+var request = Concurrency.pop(data.input);
+
+// Loop through items (folders)
+while(request != null) {
+    
+    System.print("Request children from path " :: request.parameters.path, "debug");
+    
+    extract->doRequest(request, data.output);
+    
+    helper->requestSendForProcessing(request);
+    
+    request = Concurrency.pop(data.input);
+}
+
+
+
+
+// function crawlNodes(parentNode, ancestors, level, maxLevel) {
+//     // Iterate through all people
+//     var parameterObj = Collection.duplicate(DEFAULTPARAMETERS);
+    
+//     // Get first items
+//     var results = api->getChildNodes(parentNode._id, parameterObj);
+//     while(true) {
+    
+//         foreach(object in results.objects) {
+//             var node = object.object.properties;
+//             // System.print(String.repeat("    ", level) :: node["cmis:objectTypeId"].value :: " | Name: " :: node["cmis:name"].value);
+            
+//             var document = storeDocument(node, parentNode, ancestors, level);
+            
+//             if( document.kind == "Folder" && (maxLevel == null || level < maxLevel) ) {
+//                 // Crawl children
+//                 var newAncestors = Collection.duplicate(ancestors) + [document._id];
+                
+//                 crawlNodes(document, newAncestors, level+1, maxLevel);
+//             }
+//         }
+        
+//         // Break if no more items
+//         if( results.numItems == 0 || results.hasMoreItems == false ) { 
+//             break; 
+//         }
+        
+//         // Get next items
+//         parameterObj.skipCount += MAXITEMS; 
+//         results = api->getChildNodes(parentNode._id, parameterObj);
+//     }
+	
+// 	Mongo.updateOne(collectionName, {"_id": parentNode._id}, {"$set": {"migration.export.children": true}}, {}, database);
+// }
+// // function crawlNodes(id) { crawlNodes(id, 0); }
+// function crawlNodes() { crawlNodes({}, [], 0, null); }
+
+
+
+
+

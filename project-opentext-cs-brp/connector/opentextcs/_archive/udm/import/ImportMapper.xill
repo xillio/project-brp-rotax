@@ -1,0 +1,27 @@
+use String, System;
+
+/*
+ * object is udm object.
+*/
+function importMapping(object){
+    var mapping;
+    do{
+        mapping.name =  object.original.name.systemName;    
+    }
+    do{
+        mapping.parentId =  getParentId(object.original.parent.id);    
+    }
+    do{
+        mapping.description =  object.original.description.short;    
+    }
+    do{
+        mapping.mimeType =  object.original.mimeType.type;    
+    }
+    return mapping;
+}
+
+private function getParentId(parentXdip){
+    var parent = String.regex(parentXdip, ".*/(.*)");
+    return parent[1];
+}
+

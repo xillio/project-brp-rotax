@@ -1,0 +1,100 @@
+/**
+ * Project: Documentum
+ * Author: Arthur van der Wal
+ * Date: 12/07/2019
+ *
+ *
+ *
+ */
+
+use Web, System, XURL, Properties, File, Stream, String, Collection, Encode, Date, Hash, Assert, Mongo, Concurrency;
+
+
+include project.qE.commons.Helper as helper;
+
+//-------------------------------------------------------------------------
+//						  SETUP
+//-------------------------------------------------------------------------
+
+var concurrencyRoot = "project/qE/concurrency";
+
+var database = Mongo.connect(Properties.get("mongo.database"));
+var collectionName = Properties.get("udm.collection");
+
+var host = Properties.get("connector.opentext.export.host");
+var user = Properties.get("connector.opentext.export.user");
+var pass = Properties.get("connector.opentext.export.pass");
+
+var state = {
+	"apiUrl": host :: "/cs.exe/api/v1/",
+	"credentials": {
+		"username": user,
+		"password": pass
+	}
+};
+
+
+//-------------------------------------------------------------------------
+//						  DEMO
+//-------------------------------------------------------------------------
+
+// Prepare extraction
+init();
+
+// Start extraction
+quickExtract();
+
+
+//-------------------------------------------------------------------------
+//						  FUNCTIONS
+//-------------------------------------------------------------------------
+
+
+function init() {
+    
+    Mongo.drop(collectionName, database); // DROP DATABASE
+	
+	// PREPARE REQUEST STORE
+	helper->dropRequestStore(); // DROP REQUEST STORE
+	helper->createStoreIndexes(); // CREATE INDEXES
+	
+	// ADD FIRST REQUEST (this could be a folder or a root depending on your needs)
+	foreach(objectId in String.split(Properties.get("project.nodes", "2000"), ",")) {
+	    helper->addRequest({
+            "parameters": {
+                "state": state,
+                "objectId": @objectId, // Start from root X
+            }
+        });
+	}
+}
+
+function quickExtract() {
+	
+    // Start crawling provided root nodes
+    Concurrency.run([
+        // Provider
+        {
+            "robot": concurrencyRoot :: "/ProvideRequests.xill",
+            "config": {
+                
+            },
+            "threadCount": 1,
+        }
+        ,
+        {
+            "robot": concurrencyRoot :: "/DoRequest.xill",
+            "config": {
+                
+            },
+            "threadCount": 2,
+        },
+        {
+            "robot": concurrencyRoot :: "/PrintProcessed.xill",
+            "config": {
+                
+            },
+            "threadCount": 1,
+        }
+    ]);
+}
